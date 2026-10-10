@@ -1,0 +1,91 @@
+From 692f29e52d974084e043ac6191440d2d02c995af Mon Sep 17 00:00:00 2001
+From: FileZilla dark mode port <fzdark@localhost>
+Date: Sun, 4 Oct 2026 10:23:41 -0500
+Subject: [PATCH 5/8] interface: fix std::wstring combined with a narrow char
+ or literal
+
+These are latent upstream bugs that no longer compile against libstdc++ 16.
+
+LocalTreeView.cpp
+    "path + fz::local_filesys::path_separator" concatenates a std::wstring
+    with a char. libfilezilla declares path_separator as char, and std::wstring
+    has no operator+ for char, so the expression is ill-formed. Use
+    CLocalPath::path_separator instead: it is the wchar_t spelling of the same
+    character, and src/interface/state.cpp already uses it for this exact job.
+
+sitemanager_controls.cpp
+    Three comparisons of the std::wstring returned by GetExtraParameter()
+    against narrow literals: AES256, aws:kms and customer. The adjacent
+    accelerate == L"1" comparison already carries the prefix, so these three
+    simply missed it.
+
+settings/optionspage_filetype.cpp
+    "extensions.substr(0, pos - 1) + '|'" concatenates std::wstring with
+    char. The wide spelling is intended, matching the wide literal the result
+    is later run through fz::replace_substrings with.
+---
+ src/interface/LocalTreeView.cpp                 | 7 ++++++-
+ src/interface/settings/optionspage_filetype.cpp | 2 +-
+ src/interface/sitemanager_controls.cpp          | 6 +++---
+ 3 files changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/src/interface/LocalTreeView.cpp b/src/interface/LocalTreeView.cpp
+index c0ab0c9..4f7fe04 100644
+--- a/src/interface/LocalTreeView.cpp
++++ b/src/interface/LocalTreeView.cpp
+@@ -1510,7 +1510,12 @@ bool CLocalTreeView::CheckSubdirStatus(wxTreeItemId& item, std::wstring const& p
+ 				type = fz::local_filesys::get_file_info(fz::to_native(path + pData->m_known_subdir), was_link, 0, &date, &attributes);
+ 			}
+ 			else {
+-				type = fz::local_filesys::get_file_info(fz::to_native(path + fz::local_filesys::path_separator + pData->m_known_subdir), was_link, 0, &date, &attributes);
++				// Use CLocalPath::path_separator rather than fz::local_filesys::path_separator
++				// here: libfilezilla declares its separator as char, and
++				// std::wstring + char has no operator+, so this expression does not
++				// compile. CLocalPath::path_separator is the wchar_t spelling of the
++				// very same character (L'\\' on Windows, L'/' elsewhere).
++				type = fz::local_filesys::get_file_info(fz::to_native(path + CLocalPath::path_separator + pData->m_known_subdir), was_link, 0, &date, &attributes);
+ 			}
+ 			if (type == fz::local_filesys::dir) {
+ 				CFilterManager filter;
+diff --git a/src/interface/settings/optionspage_filetype.cpp b/src/interface/settings/optionspage_filetype.cpp
+index 64ea495..feb534e 100644
+--- a/src/interface/settings/optionspage_filetype.cpp
++++ b/src/interface/settings/optionspage_filetype.cpp
+@@ -126,7 +126,7 @@ bool COptionsPageFiletype::LoadPage()
+ 			ext.clear();
+ 		}
+ 		else {
+-			ext += extensions.substr(0, pos - 1) + '|';
++			ext += extensions.substr(0, pos - 1) + L'|';
+ 		}
+ 		extensions = extensions.substr(pos + 1);
+ 		pos = extensions.find('|');
+diff --git a/src/interface/sitemanager_controls.cpp b/src/interface/sitemanager_controls.cpp
+index c04708f..7d50cf6 100644
+--- a/src/interface/sitemanager_controls.cpp
++++ b/src/interface/sitemanager_controls.cpp
+@@ -1683,10 +1683,10 @@ void S3SiteControls::SetSite(Site const& site, bool predefined)
+ 		if (sse_algorithm.empty()) {
+ 			xrc_call(parent_, "ID_S3_NOENCRYPTION", &wxRadioButton::SetValue, true);
+ 		}
+-		else if (sse_algorithm == "AES256") {
++		else if (sse_algorithm == L"AES256") {
+ 			xrc_call(parent_, "ID_S3_AES256", &wxRadioButton::SetValue, true);
+ 		}
+-		else if (sse_algorithm == "aws:kms") {
++		else if (sse_algorithm == L"aws:kms") {
+ 			xrc_call(parent_, "ID_S3_AWSKMS", &wxRadioButton::SetValue, true);
+ 			auto sse_kms_key = site.server.GetExtraParameter("ssekmskey");
+ 			if (!sse_kms_key.empty()) {
+@@ -1697,7 +1697,7 @@ void S3SiteControls::SetSite(Site const& site, bool predefined)
+ 				xrc_call(parent_, "ID_S3_KMSKEY", &wxChoice::SetSelection, static_cast<int>(s3_sse::KmsKey::DEFAULT));
+ 			}
+ 		}
+-		else if (sse_algorithm == "customer") {
++		else if (sse_algorithm == L"customer") {
+ 			xrc_call(parent_, "ID_S3_CUSTOMER_ENCRYPTION", &wxRadioButton::SetValue, true);
+ 			auto customer_key = server.GetExtraParameter("ssecustomerkey");
+ 			xrc_call(parent_, "ID_S3_CUSTOMER_KEY", &wxTextCtrl::ChangeValue, customer_key);
+-- 
+2.47.1.windows.1
+

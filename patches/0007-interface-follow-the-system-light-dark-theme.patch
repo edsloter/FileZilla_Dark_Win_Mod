@@ -1,0 +1,176 @@
+From 5fc4a87b6cbf89e8895d306efe0b8d13441a3d0b Mon Sep 17 00:00:00 2001
+From: FileZilla dark mode port <fzdark@localhost>
+Date: Sun, 4 Oct 2026 12:40:56 -0500
+Subject: [PATCH 7/8] interface: follow the system light/dark theme
+
+wxWidgets 3.3 gained the dark mode support this port is built against. Two
+distinct things are needed on Windows, and only the second picks the
+appearance:
+
+  MSWEnableDarkMode() opts the process in to the dark mode attributes that the
+  common controls, wxMessageBox and the system dialogs honour. Without it wx
+  keeps drawing the light theme no matter what appearance is requested. It
+  returns false on Windows older than 10 1809, where dark mode is not
+  available at all, so the return value has to be checked.
+
+  SetAppearance() then decides light or dark. Appearance::System tracks the
+  Windows theme for the lifetime of the process, including live changes,
+  rather than pinning whichever appearance happens to be active at startup.
+
+Both must run from OnInit() before any frame exists: Windows only honours the
+dark mode attributes on a window at creation time, so applying this later
+would leave already-created frames in the old appearance.
+
+The new "Dark mode" option defaults to on and controls whether the system
+appearance is followed or light is pinned, exposed under Appearance in the
+interface options page. It is read at startup only, which the page says
+plainly rather than pretending to apply live.
+---
+ src/interface/FileZilla.cpp                   | 31 +++++++++++++++++++
+ src/interface/Options.cpp                     |  5 ++-
+ src/interface/Options.h                       |  1 +
+ src/interface/filezillaapp.h                  |  5 +++
+ .../settings/optionspage_interface.cpp        | 13 ++++++++
+ 5 files changed, 54 insertions(+), 1 deletion(-)
+
+diff --git a/src/interface/FileZilla.cpp b/src/interface/FileZilla.cpp
+index bc925fe..ea7a16b 100644
+--- a/src/interface/FileZilla.cpp
++++ b/src/interface/FileZilla.cpp
+@@ -130,6 +130,8 @@ bool CFileZillaApp::OnInit()
+ 	AddStartupProfileRecord("CFileZillaApp::OnInit(): Loading options"sv);
+ 	options_ = std::make_unique<COptions>();
+ 
++	SetupAppearance();
++
+ 	InitLocale();
+ 
+ #ifndef _DEBUG
+@@ -224,6 +226,35 @@ int CFileZillaApp::OnExit()
+ 	return wxApp::OnExit();
+ }
+ 
++void CFileZillaApp::SetupAppearance()
++{
++	AddStartupProfileRecord("CFileZillaApp::SetupAppearance()"sv);
++
++	auto const followSystem = options_->get_bool(OPTION_DARKMODE);
++
++#ifdef __WXMSW__
++	// Windows needs two separate things, and only the second one picks the
++	// appearance. MSWEnableDarkMode() opts the process in to the dark mode
++	// attributes that the common controls, the message box and the system
++	// dialogs honour; without it wx keeps drawing the light theme no matter
++	// what appearance is requested. It returns false on Windows versions
++	// predating 10 1809, where dark mode simply is not available.
++	if (!MSWEnableDarkMode(wxApp::DarkMode_Auto)) {
++		AddStartupProfileRecord("Dark mode unavailable, staying light"sv);
++		return;
++	}
++#else
++	// GTK and macOS always track the system appearance, so there is nothing to
++	// opt in to.
++	(void)followSystem;
++#endif
++
++	// Appearance::System makes wx follow the Windows theme for the lifetime of
++	// the process, including live changes to it, rather than pinning whichever
++	// appearance happens to be active right now.
++	SetAppearance(followSystem ? wxApp::Appearance::System : wxApp::Appearance::Light);
++}
++
+ bool CFileZillaApp::LoadResourceFiles()
+ {
+ 	AddStartupProfileRecord("CFileZillaApp::LoadResourceFiles"sv);
+diff --git a/src/interface/Options.cpp b/src/interface/Options.cpp
+index 817565c..12f4adc 100644
+--- a/src/interface/Options.cpp
++++ b/src/interface/Options.cpp
+@@ -117,7 +117,10 @@ static unsigned int register_interface_options()
+ 		{ "Disable update footer", false, option_flags::normal },
+ 		{ "Tab data", L"", option_flags::normal | option_flags::sensitive_data, option_type::xml },
+ 		{ "Highest shown overlay id", 0, option_flags::normal },
+-		{ "Resolve local symlinks", DEFAULT_LOCAL_SYMLINK_RESOLVE, option_flags::platform }
++		{ "Resolve local symlinks", DEFAULT_LOCAL_SYMLINK_RESOLVE, option_flags::platform },
++		// Follow the system light/dark preference. Turning this off pins the
++		// application to the light appearance regardless of the Windows theme.
++		{ "Dark mode", true, option_flags::normal }
+ 	});
+ 	return value;
+ }
+diff --git a/src/interface/Options.h b/src/interface/Options.h
+index 3b4bca8..fab6c7e 100644
+--- a/src/interface/Options.h
++++ b/src/interface/Options.h
+@@ -86,6 +86,7 @@ enum interfaceOptions : unsigned int
+ 	OPTION_TAB_DATA,
+ 	OPTION_SHOWN_OVERLAY,
+ 	OPTION_RESOLVE_LOCAL_SYMLINKS,
++	OPTION_DARKMODE,
+ 
+ 	// Has to be last element
+ 	OPTIONS_NUM
+diff --git a/src/interface/filezillaapp.h b/src/interface/filezillaapp.h
+index befe7ff..3e2be75 100644
+--- a/src/interface/filezillaapp.h
++++ b/src/interface/filezillaapp.h
+@@ -56,6 +56,11 @@ protected:
+ 	void LoadLocales();
+ 	int ProcessCommandLine();
+ 
++	// Decide the light/dark appearance. Must run before any frame exists,
++	// because Windows only honours the dark mode attributes on a window at
++	// creation time.
++	void SetupAppearance();
++
+ #if USE_UILOCALE
+ 	bool SetLocale(std::wstring language, wxLanguageInfo const** info);
+ 	virtual wxLayoutDirection GetLayoutDirection() const override;
+diff --git a/src/interface/settings/optionspage_interface.cpp b/src/interface/settings/optionspage_interface.cpp
+index 6485a3c..1b14bb3 100644
+--- a/src/interface/settings/optionspage_interface.cpp
++++ b/src/interface/settings/optionspage_interface.cpp
+@@ -28,6 +28,8 @@ struct COptionsPageInterface::impl
+ 	wxCheckBox* momentary_speed_{};
+ 	wxCheckBox* ropListRefresh_{};
+ 	wxCheckBox* disableDnd_{};
++
++	wxCheckBox* darkmode_{};
+ };
+ 
+ COptionsPageInterface::COptionsPageInterface()
+@@ -110,6 +112,14 @@ bool COptionsPageInterface::CreateControls(wxWindow* parent)
+ 		inner->Add(impl_->disableDnd_);
+ 	}
+ 
++	{
++		auto [box, inner] = lay.createStatBox(main, _("Appearance"), 1);
++
++		impl_->darkmode_ = new wxCheckBox(box, nullID, _("Follow the &system light and dark theme"));
++		inner->Add(impl_->darkmode_);
++		inner->Add(new wxStaticText(box, nullID, _("Takes effect the next time FileZilla starts.")));
++	}
++
+ 	{
+ 		auto [box, inner] = lay.createStatBox(main, _("Transfer Queue"), 1);
+ 		impl_->momentary_speed_ = new wxCheckBox(box, nullID, _("&Display momentary transfer speed instead of average speed"));
+@@ -163,6 +173,8 @@ bool COptionsPageInterface::LoadPage()
+ 	impl_->ropListRefresh_->SetValue(m_pOptions->get_bool(OPTION_REMOTE_ROP_LISTING_REFRESH));
+ 	impl_->disableDnd_->SetValue(m_pOptions->get_bool(OPTION_DND_DISABLED));
+ 
++	impl_->darkmode_->SetValue(m_pOptions->get_bool(OPTION_DARKMODE));
++
+ 	return true;
+ }
+ 
+@@ -201,6 +213,7 @@ bool COptionsPageInterface::SavePage()
+ 	m_pOptions->set(OPTION_ALREADYCONNECTED_CHOICE, action);
+ 	m_pOptions->set(OPTION_REMOTE_ROP_LISTING_REFRESH, impl_->ropListRefresh_->GetValue());
+ 	m_pOptions->set(OPTION_DND_DISABLED, impl_->disableDnd_->GetValue());
++	m_pOptions->set(OPTION_DARKMODE, impl_->darkmode_->GetValue());
+ 
+ 	return true;
+ }
+-- 
+2.47.1.windows.1
+

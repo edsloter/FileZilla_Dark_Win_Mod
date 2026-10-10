@@ -1,0 +1,213 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# wx-config for the wxWidgets 3.3.3 MSW (MinGW-w64 / UCRT64) build produced by
+# scripts/build-wx_win64.ps1.
+#
+# WHY THIS FILE EXISTS
+#   wx's makefile.gcc builds the libraries but does NOT generate a wx-config
+#   script - that only happens with the autotools build (wx-config.in).
+#   FileZilla's configure.ac calls AM_PATH_WXCONFIG, which requires wx-config to
+#   work, and FileZilla's m4/wxwin.m4 drives it quite hard.
+#
+#   We build with makefile.gcc because MSYS2 only packages wxWidgets 3.3.2 and
+#   we need 3.3.3 for the appearance-aware wxMessageBox used by
+#   src/interface/msgbox.cpp for dark mode dialogs.
+#
+# WHAT m4/wxwin.m4 ACTUALLY CALLS
+#   With configure.ac:213
+#     AM_PATH_WXCONFIG([3.2.1], [wxWin=1], , [aui,xrc,adv,core,xml,base],
+#                      [--unicode=yes --universal=no])
+#   $WX_CONFIG_WITH_ARGS becomes "wx-config --unicode=yes --universal=no" and the
+#   library list is appended AFTER the switch, giving:
+#
+#     wx-config --unicode=yes --universal=no --version
+#     wx-config --unicode=yes --universal=no --libs aui,xrc,adv,core,xml,base
+#     wx-config --unicode=yes --universal=no --static --libs aui,xrc,...
+#     wx-config --unicode=yes --universal=no --rescomp
+#     wx-config --unicode=yes --universal=no --cppflags aui,xrc,...
+#     wx-config --unicode=yes --universal=no --cxxflags aui,xrc,...
+#     wx-config --unicode=yes --universal=no --cflags   aui,xrc,...
+#
+#   Note --cppflags, not --cxxflags, is what feeds WX_CPPFLAGS (wxwin.m4:312),
+#   and WX_CPPFLAGS is what configure.ac:244 prepends to CPPFLAGS. An earlier
+#   revision of this script did not know --cppflags and quietly fell through to
+#   printing its usage banner, which configure then compiled as if it were a
+#   preprocessor flag. Unknown switches are now a hard error so that cannot
+#   happen silently again.
+#
+#   wxwin.m4:316-317 then does sed "s@^$WX_CPPFLAGS *@@" on --cflags output to
+#   derive WX_CFLAGS_ONLY, so --cflags output must start with --cppflags output.
+#   For MSW all three of --cppflags/--cxxflags/--cflags are identical, which
+#   makes WX_CFLAGS_ONLY and WX_CXXFLAGS_ONLY empty - exactly as intended.
+#
+#   wxwin.m4:259 also asks for --static and reports "static library: yes" if it
+#   gets anything back. This is a DLL-only build, so --static must print
+#   NOTHING and fail, otherwise configure believes it has static libraries and
+#   later fails to link.
+#
+# PATHS
+#   Emitted in Windows form (C:/...) on purpose: FileZilla is compiled with the
+#   native UCRT64 gcc, which does not understand MSYS2-style /c/... paths.
+#
+# DELIBERATE DEVIATIONS FROM STOCK wx-config
+#   * No -municode. FileZilla supplies its own ANSI WinMain
+#     (src/interface/FileZilla.cpp:661), so the PE entry point must stay
+#     WinMain; -municode would make crt look for wWinMain and the link fails.
+#   * -mwindows IS emitted so the binary gets the GUI subsystem.
+#   * "all" expands to the modules that were actually built (base, xml, core,
+#     adv, xrc, aui) rather than every module wx knows about, because naming a
+#     module that makefile.gcc never built would break the link.
+# ---------------------------------------------------------------------------
+
+wx_prefix="C:/wxWidgets-3.3.3"
+wx_version_major="3"
+wx_version_minor="3"
+wx_version_release="3"
+wx_widgetset="mswu"
+
+wx_libdir="$wx_prefix/lib/gcc_dll"
+# setup.h and friends are generated into the lib dir; the rest of the headers
+# come straight from the source tree. Both are needed, in this order.
+wx_incdir_setup="$wx_libdir/$wx_widgetset"
+wx_incdir_src="$wx_prefix/include"
+
+# Only these modules exist in our build.
+wx_built_libs="base xml core adv xrc aui"
+
+# Win32 system libraries, exactly as used when linking the wx DLLs.
+wx_std_libs="-lkernel32 -luser32 -lgdi32 -lgdiplus -lmsimg32 -lcomdlg32 \
+-lwinspool -lwinmm -lshell32 -lshlwapi -lcomctl32 -lole32 -loleaut32 -luuid \
+-lrpcrt4 -ladvapi32 -lversion -lws2_32 -lwininet -loleacc -luxtheme"
+
+# Third-party archives wx statically embeds; naming them when linking an
+# application mirrors what stock wx-config emits.
+wx_thirdparty_libs="-lwxpng -lwxtiff -lwxjpeg -lwxwebp -lwxzlib -lwxregexu -lwxexpat"
+
+do_version=no
+do_prefix=no
+do_flags=no
+do_libs=no
+do_rescomp=no
+want_static=no
+requested=""
+skip_next=no
+
+die() {
+    echo "wx-config: $1" >&2
+    exit 1
+}
+
+for arg in "$@"; do
+    # --optional-libs takes a value; swallow it so it is not mistaken for a lib.
+    if test "$skip_next" = yes; then
+        skip_next=no
+        continue
+    fi
+    case "$arg" in
+        --version)           do_version=yes ;;
+        --prefix)            do_prefix=yes ;;
+        --cppflags|--cxxflags|--cflags) do_flags=yes ;;
+        --libs)              do_libs=yes ;;
+        --rescomp)           do_rescomp=yes ;;
+        --static)            want_static=yes ;;
+        --optional-libs)     skip_next=yes ;;
+        # Accepted for compatibility with wxwin.m4's WX_CONFIG_WITH_ARGS.
+        --unicode=*|--universal=*|--release|--no_gui|--gui|--nodlg|--debug)
+                             ;;
+        -*)
+            # Never ignore these silently: a missed switch turns into garbage
+            # flags inside configure, which is far harder to debug than this.
+            die "unrecognised option '$arg' (this shim only implements the
+       wx-config surface that FileZilla's m4/wxwin.m4 uses)" ;;
+        *)                   requested="$requested $arg" ;;
+    esac
+done
+
+if test "$do_version" = yes; then
+    echo "$wx_version_major.$wx_version_minor.$wx_version_release"
+    exit 0
+fi
+
+if test "$do_prefix" = yes; then
+    echo "$wx_prefix"
+    exit 0
+fi
+
+# --static must yield nothing at all: wxwin.m4:259 treats any output as proof
+# that static libraries exist, and this is a DLL-only build.
+if test "$want_static" = yes; then
+    exit 1
+fi
+
+if test "$do_rescomp" = yes; then
+    echo "windres"
+    exit 0
+fi
+
+if test "$do_flags" = yes; then
+    # Emitted on ONE line on purpose. wxwin.m4:316-317 builds
+    #     WX_CFLAGS_ONLY=`echo $WX_CFLAGS | sed "s@^$WX_CPPFLAGS *@@"`
+    # splicing the quoted variable straight into the sed expression, so embedded
+    # newlines turn the expression into two lines and sed reports
+    # "unterminated `s' command". Stock wx-config emits multi-line output and
+    # trips this too. Both *_ONLY variables should end up empty here anyway
+    # because --cppflags, --cxxflags and --cflags are identical for MSW.
+    #
+    # -DWXUSINGDLL is required: the generated setup.h does not define
+    # wxUSE_WXDLLS itself, every wx build line passes it explicitly.
+    # -DwxDEBUG_LEVEL=0 matches the DEBUG_FLAG=0 libraries that were built.
+    echo "-D__WXMSW__ -DWXUSINGDLL -DwxDEBUG_LEVEL=0 -D_FILE_OFFSET_BITS=64 -I$wx_incdir_setup -I$wx_incdir_src"
+    exit 0
+fi
+
+if test "$do_libs" = yes; then
+    # The library list arrives as one comma-separated argument
+    # ("aui,xrc,adv,core,xml,base") because that is how wxwin.m4 passes it.
+    libs=$(echo "$requested" | tr ',' ' ')
+
+    # "all", or no list at all, means the modules that were actually built.
+    case " $libs " in
+        *" all "*|*"  ") libs="$wx_built_libs" ;;
+    esac
+    # "std" asks for the system/third-party libraries only.
+    case " $libs " in
+        *" std "*) libs="" ;;
+    esac
+
+    # Emit in dependency order regardless of the order requested, so ld always
+    # sees base before the modules that build on it.
+    out=""
+    for want in $wx_built_libs; do
+        for have in $libs; do
+            if test "$have" = "$want"; then
+                case "$want" in
+                    base)     out="$out -lwxbase33u" ;;
+                    xml)      out="$out -lwxbase33u_xml" ;;
+                    core)     out="$out -lwxmsw33u_core" ;;
+                    adv)      out="$out -lwxmsw33u_adv" ;;
+                    xrc)      out="$out -lwxmsw33u_xrc" ;;
+                    aui)      out="$out -lwxmsw33u_aui" ;;
+                esac
+            fi
+        done
+    done
+
+    # Emitted on ONE line on purpose. wxwin.m4 puts WX_LIBS straight into
+    # AC_SUBST, so config.status writes it verbatim into the top-level Makefile
+    # and into every subdirectory Makefile:
+    #     WX_LIBS = -LC:/... \n -lwxbase33u ... \n -lkernel32 ...
+    # Multi-line output therefore becomes several make statements and make dies
+    # with "missing separator" - and it also breaks config.status's
+    # "sed ... | make -f - am--depfiles" dependency-tracking bootstrap, which
+    # surfaces as the misleading "Something went wrong bootstrapping makefile
+    # fragments". Stock wx-config emits multi-line output and breaks here too.
+    #
+    # -mthreads matches the -mthreads the libraries were built with.
+    # -mwindows gives the GUI subsystem; -municode is deliberately absent.
+    echo "-L$wx_libdir $out $wx_thirdparty_libs $wx_std_libs -mthreads -mwindows"
+    exit 0
+fi
+
+echo "wx-config for wxWidgets $wx_version_major.$wx_version_minor.$wx_version_release ($wx_widgetset)"
+echo "usage: wx-config [--version] [--prefix] [--cppflags|--cxxflags|--cflags] [--libs] [libs]"
+exit 0

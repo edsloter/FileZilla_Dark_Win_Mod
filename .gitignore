@@ -1,0 +1,41 @@
+# Scratch that `git am` leaves behind when a series is interrupted, re-applied or
+# amended. Harmless, machine-specific, and must never reach the repository or a
+# release. Note this is the repo's own ignore file and is unrelated to
+# patches/.gitignore.baseline, which is the verbatim FileZilla .gitignore that the
+# patch series restores inside the build work tree.
+patches/series-backup/
+series-backup/
+
+# Local scratch and build output. None of this belongs in the repository: the kit
+# is source plus scripts, and everything else is reproducible from them.
+out/
+install/
+work/
+logs/
+build/
+deps/
+dl/
+src/
+*.log
+
+  # Archives produced by the build.
+*.7z
+*.zip
+  
+# The source drop box. Pre-downloaded upstream tarballs can be dropped here and
+# the fetch scripts will prefer them over the network, but they are large,
+# third-party and reproducible - they are an input, not source. Only the
+# directory and its instructions are tracked; drop a file in and it is ignored.
+# Patterns must not be indented: gitignore treats leading whitespace as part of
+# the pattern, so an indented "tarballs/*" silently matches nothing.
+tarballs/*
+!tarballs/.gitkeep
+!tarballs/README.md
+
+  
+
+# Editor and OS noise.
+*.swp
+*~
+.DS_Store
+Thumbs.db

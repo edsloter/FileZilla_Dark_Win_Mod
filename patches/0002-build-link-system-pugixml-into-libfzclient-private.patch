@@ -1,0 +1,39 @@
+From f86fbf74cdbcdeb14791140c8067414e009cdf7c Mon Sep 17 00:00:00 2001
+From: FileZilla dark mode port <fzdark@localhost>
+Date: Sat, 3 Oct 2026 22:18:37 -0500
+Subject: [PATCH 2/8] build: link system pugixml into libfzclient-private
+
+With --with-pugixml=builtin, ../pugixml/pugixml.cpp is compiled straight
+into libfzclient-private and the pugi::* symbols resolve internally. With
+--with-pugixml=system nothing links -lpugixml before libtool runs ld with
+-no-undefined, so the link fails on every pugi:: symbol.
+
+Only the Makefile.am change belongs in the patch series. The matching edit to
+the generated src/engine/Makefile.in is applied by
+C:\\fzdark\\scripts\\patch-generated-sources.sh, because this toolchain has no
+automake and versioning a generated 1800-line Makefile.in for the sake of one
+link flag would swamp the series and conflict against any other tarball.
+---
+ src/engine/Makefile.am | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/engine/Makefile.am b/src/engine/Makefile.am
+index de86700..a5c5420 100644
+--- a/src/engine/Makefile.am
++++ b/src/engine/Makefile.am
+@@ -149,6 +149,12 @@ libfzclient_private_la_CXXFLAGS = -fvisibility=hidden
+ libfzclient_private_la_LDFLAGS = -no-undefined -release $(ENGINE_VERSION_MAJOR).$(ENGINE_VERSION_MINOR).$(ENGINE_VERSION_MICRO)
+ libfzclient_private_la_LDFLAGS += $(LIBFZSSH_LIBS) $(LIBFILEZILLA_LIBS)
+ libfzclient_private_la_LDFLAGS += $(IDN_LIB)
++# Needed when building against a system pugixml (--with-pugixml=system). With
++# --with-pugixml=builtin ../pugixml/pugixml.cpp is compiled straight into this
++# library above and the pugi::* symbols resolve internally, but with the system
++# library nothing else links -lpugixml into libfzclient-private.la before
++# libtool runs ld with -no-undefined, so the link fails on every pugi:: symbol.
++libfzclient_private_la_LDFLAGS += $(PUGIXML_LIBS)
+ 
+ if FZ_MAC
+ libfzclient_private_la_LDFLAGS += -framework CoreServices
+-- 
+2.47.1.windows.1
+

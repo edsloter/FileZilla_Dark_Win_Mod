@@ -1,0 +1,59 @@
+From e9820616ec32c271e910fbfef170cd623bb9e213 Mon Sep 17 00:00:00 2001
+From: FileZilla dark mode port <fzdark@localhost>
+Date: Sun, 4 Oct 2026 13:43:26 -0500
+Subject: [PATCH 6/8] build: ignore autoreconf scratch output
+
+The build script now runs autoreconf -f -i, which rewrites the vendored
+config/config.guess, config/config.sub, config/ltmain.sh, m4/libtool.m4,
+src/fzshellext/configure and the aux scripts in place on every build. Add the
+scratch it leaves behind (autom4te.cache, the *~ backups) to the ignore list,
+and note why the modified vendored copies are deliberately left uncommitted
+rather than folded into the patch series.
+
+As with the block above, this one is inserted well clear of the CRLF-terminated
+last line of the upstream file so that git am, which normalises that CR away via
+git mailinfo, can still match the hunk.
+---
+ .gitignore | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/.gitignore b/.gitignore
+index 4108e87..bfa1482 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -39,6 +39,32 @@ libtool
+ locales/*.mo
+ locales/*.po.new
+ 
++# ---------------------------------------------------------------------------
++# Autoreconf scratch.
++#
++# The build script runs autoreconf -f -i before configure, so configure,
++# config/config.guess, config/config.sub, config/ltmain.sh, m4/libtool.m4 and
++# src/fzshellext/configure get rewritten in place on every build. Those are
++# tracked upstream, so they show up as modifications here; they are left
++# unmodified in git rather than committed, because the patch series only ever
++# touches real sources and lets autoreconf regenerate the rest.
++#
++# The -f is deliberate. The tarball ships a prebuilt configure generated from
++# an older m4/wxwin.m4 carrying a hard "must use wxWidgets 3.2.x" gate, and a
++# configure restored from git has a fresh enough timestamp that plain
++# autoreconf -i would leave that stale copy in place.
++# ---------------------------------------------------------------------------
++autom4te.cache/
++*~
++
++# autoreconf refreshes the vendored aux scripts, which then differ from the
++# versions in git. Ignore the churn so the status of a real source edit stands
++# out.
++/config/compile
++/config/depcomp
++/config/install-sh
++/config/missing
++
+ # autotools / automake build output
+ Makefile
+ Makefile.in
+-- 
+2.47.1.windows.1
+

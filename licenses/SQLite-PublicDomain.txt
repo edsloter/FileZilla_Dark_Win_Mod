@@ -1,0 +1,7 @@
+SQLite is in the public domain. See the full notice at the top of sqlite3.c in
+https://sqlite.org/copyright.html
+
+The Windows amalgamation also bundles a separate copy of a stock FTS5 extension
+that is also public domain; see the header in the same file.
+
+This Windows build reuses the sqlite3 amalgamation pinned in versions.ps1.

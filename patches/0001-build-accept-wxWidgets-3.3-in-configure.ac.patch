@@ -1,0 +1,42 @@
+From 9c259cc252f5f80c1463d5c29368548ae765f48e Mon Sep 17 00:00:00 2001
+From: FileZilla dark mode port <fzdark@localhost>
+Date: Sat, 3 Oct 2026 14:51:54 -0500
+Subject: [PATCH 1/8] build: accept wxWidgets 3.3 in configure.ac
+
+configure.ac refused wxWidgets 3.3 outright:
+
+    if test "${WX_VERSION_MAJOR}.${WX_VERSION_MINOR}" = "3.3"; then
+      AC_MSG_ERROR([You must use wxWidgets 3.2.x, ...])
+
+wxWidgets 3.3 is a stable series, not a development snapshot, and FileZilla
+needs it: 3.3 is the first release whose wxMessageBox is dark-mode aware,
+which the dark mode work depends on. Downgrade the check to a warning so any
+version other than 3.2 is at least reported rather than rejected.
+
+Only configure.ac is touched. The generated configure is not part of the
+series: C:\fzdark\scripts\build-filezilla.sh runs autoreconf before configure,
+so the generated copy is always rebuilt from this source.
+---
+ configure.ac | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/configure.ac b/configure.ac
+index 5b1c1c1..43350c7 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -226,8 +226,10 @@ if test "$buildmain" = "yes"; then
+         equivalent variable and wxWidgets version is $MIN_WX_VERSION or above.
+       ])
+     fi
+-    if test "${WX_VERSION_MAJOR}.${WX_VERSION_MINOR}" = "3.3"; then
+-      AC_MSG_ERROR([You must use wxWidgets 3.2.x, development versions of wxWidgets are not supported.])
++    # wxWidgets 3.3 is a stable release and FileZilla needs it for the dark mode
++    # aware wxMessageBox (3.3.3). Warn instead of refusing to build.
++    if test "${WX_VERSION_MAJOR}.${WX_VERSION_MINOR}" != "3.2"; then
++      AC_MSG_WARN([Building against wxWidgets ${WX_VERSION_MAJOR}.${WX_VERSION_MINOR}. FileZilla 3.71.1 was released against the wxWidgets 3.2 series.])
+     fi
+ 
+     # --universal=no doesn't work correctly, it still accepts universal builds. Reject it manually here.
+-- 
+2.47.1.windows.1
+

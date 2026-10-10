@@ -1,0 +1,12 @@
+# Store every file byte-for-byte and never apply end-of-line conversion.
+#
+# The patch series has to apply cleanly, and .gitignore.baseline in particular ends
+# with a single CR that is load-bearing. Git's default eol handling on Windows, and
+# any ambient core.autocrlf=true, would rewrite line endings on checkout and change
+# the blob hashes - which breaks `git am` and invalidates the audited tree hash
+# f86ca17e735fbf24d8762a94334c1e7218718549 the build verifies against.
+#
+# Marking everything as non-text disables CRLF normalisation in both directions.
+# It costs nothing here: there is no line-ending workflow to preserve in a repo of
+# patches and scripts.
+* -text

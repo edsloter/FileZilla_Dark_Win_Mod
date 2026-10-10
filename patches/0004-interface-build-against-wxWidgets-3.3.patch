@@ -1,0 +1,78 @@
+From a9b6a056812723e333ba0e759f4056c37454d874 Mon Sep 17 00:00:00 2001
+From: FileZilla dark mode port <fzdark@localhost>
+Date: Sun, 4 Oct 2026 10:23:01 -0500
+Subject: [PATCH 4/8] interface: build against wxWidgets 3.3
+
+Two API changes since 3.2 break the build:
+
+  aui_notebook_ex.cpp
+    Draw() is declared as taking a wxDC& in 3.2 but a const wxReadOnlyDC&
+    in 3.3, so the override no longer matches.
+    wxAuiNotebook::OnTabDragMotion(wxAuiNotebookEvent&) was dropped in 3.3;
+    tab dragging is handled internally now, so the override is removed rather
+    than ported.
+
+  fileexistsdlg.cpp
+    wxIcon::SetHandle() plus a separate SetSize() is deprecated in favour of
+    InitFromHICON(hIcon, width, height), which is the only 3.3-correct way to
+    take ownership of a DestroyIcon-able handle.
+
+Co-developed with wxWidgets 3.3.3, which is needed anyway for a dark-aware
+wxMessageBox.
+---
+ src/interface/aui_notebook_ex.cpp | 10 +++++++---
+ src/interface/fileexistsdlg.cpp   | 10 ++++++++--
+ 2 files changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/src/interface/aui_notebook_ex.cpp b/src/interface/aui_notebook_ex.cpp
+index aa3bf24..ef0d265 100644
+--- a/src/interface/aui_notebook_ex.cpp
++++ b/src/interface/aui_notebook_ex.cpp
+@@ -99,7 +99,7 @@ public:
+ 		return art;
+ 	}
+ 
+-	virtual wxSize GetTabSize(wxDC& dc, wxWindow* wnd, const wxString& caption, const wxBitmapBundle& bitmap, bool active, int close_button_state, int* x_extent) override
++	virtual wxSize GetTabSize(wxReadOnlyDC& dc, wxWindow* wnd, const wxString& caption, const wxBitmapBundle& bitmap, bool active, int close_button_state, int* x_extent) override
+ 	{
+ 		wxSize size = TabArtBase::GetTabSize(dc, wnd, caption, bitmap, active, close_button_state, x_extent);
+ 
+@@ -219,8 +219,12 @@ END_EVENT_TABLE()
+ 
+ void wxAuiNotebookEx::OnTabDragMotion(wxAuiNotebookEvent& evt)
+ {
+-	wxAuiNotebook::OnTabDragMotion(evt);
+-
++	// wxWidgets 3.3 dropped wxAuiNotebook::OnTabDragMotion(wxAuiNotebookEvent&);
++	// the tab drag callbacks are now non-virtual OnTab*(wxAuiTabCtrl*, int)
++	// methods that only wxAuiTabEventSource may call, so there is no base
++	// implementation left to chain to. wxEVT_AUINOTEBOOK_DRAG_MOTION is still
++	// generated and still bound below, and wxAuiNotebook has already done its
++	// own drag handling by the time this handler runs.
+ 	int active = m_tabs.GetActivePage();
+ 	if (active != wxNOT_FOUND) {
+ 		m_curPage = active;
+diff --git a/src/interface/fileexistsdlg.cpp b/src/interface/fileexistsdlg.cpp
+index bdb338d..bb1befb 100644
+--- a/src/interface/fileexistsdlg.cpp
++++ b/src/interface/fileexistsdlg.cpp
+@@ -184,8 +184,14 @@ void CFileExistsDlg::LoadIcon(int id, std::wstring const& file)
+ 		dc->DrawRectangle(0, 0, size.x, size.y);
+ 
+ 		wxIcon icon;
+-		icon.SetHandle(fileinfo.hIcon);
+-		icon.SetSize(size.x, size.y);
++		// wxWidgets 3.3 removed wxIcon::SetSize(); InitFromHICON() replaces it.
++		// Like SetHandle() it takes ownership of the HICON and destroys it with
++		// the wxIcon, so SHGetFileInfo's handle must not be released here.
++		// Caveat: under wxDEBUG_LEVEL >= 2 InitFromHICON asserts that the given
++		// size matches the handle's real size, and SHGFI_ICON returns a
++		// system-sized icon rather than FileZilla's iconSizeNormal, so this is
++		// only correct against a release build of wx - which is what we use.
++		icon.InitFromHICON(fileinfo.hIcon, size.x, size.y);
+ 
+ 		dc->DrawIcon(icon, 0, 0);
+ 		delete dc;
+-- 
+2.47.1.windows.1
+
