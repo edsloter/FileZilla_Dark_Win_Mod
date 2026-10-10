@@ -1,5 +1,7 @@
 # FileZilla 3.71.1 — Windows light/dark theme build kit
 
+![FileZilla 3.71.1 in Windows dark mode, rebuilt to follow the system appearance setting](screenshots/filezilla-dark-theme.png)
+
 A source-and-scripts kit that builds FileZilla 3.71.1 for Windows x64 with working
 system light/dark theme support, plus two ways to apply the result as a drop-in overlay
 to a machine that already has FileZilla installed.
@@ -34,7 +36,8 @@ wx 3.2 fails at load time.
 
     manifests/    SHA-256 of all 1320 files in the upstream source tree
     patches/      the 8-patch series, plus .gitignore.baseline
-    licenses/     licence texts for everything redistributed
+    licenses/     licence texts for the components built here
+    screenshots/  the screenshot at the top of this file
     scripts/      everything that fetches, patches, builds, packages and tests
     scripts/nsis/ templates for the .exe installer and its removal tool
     tarballs/     offline drop box (see below)
