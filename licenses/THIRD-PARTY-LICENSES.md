@@ -18,9 +18,9 @@ the machine, and where the code lives upstream.
 - Boost 1.88.0 (Boost Software License 1.0): `Boost-LICENSE.txt`.
 - SQLite 3.53.4 amalgamation (public domain): `SQLite-PublicDomain.txt`; see the
   header comment inside `sqlite3.c` for authority.
-- glu, expat, pcre and zlib sources bundled inside wxWidgets and 7-Zip: see
-  the COPYING entries inside their source trees in `wxWidgets-3.3.3/` and the
-  stock MSYS2 packages under `C:\msys64\ucrt64\share\licenses\<package>\`.
+- glu, expat, pcre and zlib sources bundled inside wxWidgets: see
+    the COPYING entries inside their source trees in `wxWidgets-3.3.3/` and the
+    stock MSYS2 packages under `C:\msys64\ucrt64\share\licenses\<package>\`.
 
 ## Packages supplied by the toolchain (MSYS2 UCRT64, in `C:\msys64\ucrt64`)
 
@@ -31,10 +31,16 @@ brotli, gmp) are covered by their own licenses; the authoritative copies are in
 
 ## Build tools
 
-- 7-Zip (LGPL-2.1+, with the UnRAR restriction): `7-Zip-License.txt`.
-- MSYS2 packages (bash, make, meson, ninja, gdb, libtool): see
-  `C:\msys64\usr\share\licenses\<package>\` and
-  `C:\msys64\ucrt64\share\licenses\<package>\`.
+None of these ship in the overlay; they are needed to build it, and the kit
+redistributes none of them.
+
+- MSYS2 packages (bash, make, meson, ninja, gdb, libtool, 7-Zip): see
+    `C:\msys64\usr\share\licenses\<package>\` and
+    `C:\msys64\ucrt64\share\licenses\<package>\`.
+- NSIS, unpacked to `C:\fzdark\tools\nsis`: `COPYING` in that directory,
+    shipped in the archive itself. zlib/libpng for NSIS itself; note that the
+    LZMA compression module - the one makensis uses for our installer - is
+    CPL-1.0, and bzip2 is bzip2-licensed.
 - Git for Windows: GPLv2, `C:\Program Files\Git\LICENSE.md`.
 - PowerShell 7: MIT, `C:\Program Files\PowerShell\7\LICENSE.txt`.
 

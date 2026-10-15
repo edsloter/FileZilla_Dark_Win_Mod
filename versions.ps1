@@ -150,11 +150,16 @@ $GitUrl     = "https://github.com/git-for-windows/git/releases/download/v$($GitV
 $GitSize    = 66697744
 $GitSha256  = 'bfe94e7b419b16eee9fecbd1253a98e3d4f49ba8f029630549052278ffe286a6'
 
-$SevenZipVersion = '26.03'
-$SevenZipFile    = "7z$($SevenZipVersion -replace '\.', '')-x64.exe"
-$SevenZipUrl     = "https://www.7-zip.org/a/$($SevenZipFile)"
-$SevenZipSize    = 1661239
-$SevenZipSha256  = '0859c524b8a63551848f0c246abddcb1d0b7b656b0fbfe879f8d85e61a9e6edd'
+# 7-Zip is not installed. It comes from the MSYS2 toolchain
+# (mingw-w64-ucrt-x86_64-7zip), which is already a build requirement, and
+# install-toolchain_win64.ps1 puts it on PATH.
+#
+# The msys/p7zip package is deliberately NOT used: it is the old 9.x-line
+# fork, which has no PE or NSIS format handlers and answers
+# "Can not open the file as archive" for an NSIS setup .exe. The ucrt64
+# package is current 7-Zip and does open one.
+$SevenZipExe = 'C:\msys64\ucrt64\bin\7z.exe'
+$SevenZipPacmanPackage = 'mingw-w64-ucrt-x86_64-7zip'
 
 # NSIS builds the .exe installer for the overlay. Only needed for that one artefact, so it
 # is unpacked rather than installed: the setup .exe is extracted with 7-Zip, which yields a
@@ -205,7 +210,6 @@ $Msys2Root  = 'C:\msys64'
 # look here, and MSYS2 and wxWidgets both unpack to fixed paths under C:\.
 
 $BuildRoot  = 'C:\fzdark'
-$SevenZipExe = 'C:\Program Files\7-Zip\7z.exe'
 $NsisRoot    = 'C:\fzdark\tools\nsis'
 $NsisExe     = 'C:\fzdark\tools\nsis\makensis.exe'
 $MsysBash   = 'C:\msys64\usr\bin\bash.exe'

@@ -22,7 +22,7 @@ files** — 32 of them: 8 that replace existing files, 24 that are added, none d
 
 | Artefact | Size | Use it when |
 |---|---|---|
-| `FileZilla-3.71.1-dark-overlay-setup.exe` | ~7.2 MB | Normally. Self-contained installer: detects your FileZilla, backs up what it replaces, installs, and registers an uninstaller. Needs neither 7-Zip nor PowerShell on the machine that installs it. |
+| `FileZilla-3.71.1-dark-overlay-setup.exe` | ~7.2 MB | Normally. Self-contained installer: detects your FileZilla, backs up what it replaces, installs, and registers an uninstaller. Nothing has to be installed on the machine that installs it. |
 | `FileZilla-3.71.1-dark-overlay.7z` | ~6.3 MB | You would rather extract files over your existing installation and manage the backup yourself. Also carries the PowerShell installer for a guided, reversible install. |
 
 Each ships with a `.sha256` sidecar in `sha256sum` format so it can be checked after
@@ -50,7 +50,7 @@ the bootstrap itself):
 
     powershell -File .\scripts\bootstrap_win64.ps1
 
-Installs and hash-verifies PowerShell 7, Git, 7-Zip, MSYS2 and wxWidgets 3.3.3.
+Installs and hash-verifies PowerShell 7, Git, MSYS2 and wxWidgets 3.3.3.
 Re-running is safe; finished steps are skipped. `-Plan` prints what is missing without
 installing anything, and needs no admin.
 
@@ -71,11 +71,11 @@ Or combine them:
 | `-Root <path>` | Put builds, extracts and intermediates somewhere other than `C:\fzdark`. |
 | `-Keep` | Keep downloaded archives, extracted trees, build intermediates, logs and the patched work tree. Without it each stage deletes what it fetched once done with it. |
 | `-Force` | Rebuild FileZilla and the overlay from scratch. Deliberately does *not* reinstall the MSYS2 toolchain, which needs an elevated shell. |
-| `-No7z` | Build only the `.exe`. **7-Zip is then not needed at all** on the build machine. The `.exe` is always built either way. |
+| `-No7z` | Build only the `.exe`, skipping the `.7z`. The `.exe` is always built either way. |
 | `-SkipOverlay` | Skip both overlay artefacts; stop after the FileZilla build. |
 
-The `.7z` needs 7-Zip at build time; the `.exe` does not. 7-Zip stays in the default
-bootstrap because it is a small install and some people will want the `.7z`.
+Both artefacts are built by default and neither needs anything installed on the
+machine that receives it.
 
 Fixed paths, not configurable: `C:\msys64` (toolchain), `C:\wxWidgets-3.3.3` (built in
 place), `C:\fzdark\tools\nsis` (portable NSIS, unpacked on demand for the `.exe` build).

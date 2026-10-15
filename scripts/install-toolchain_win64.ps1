@@ -52,6 +52,10 @@ $packages = @(
     'mingw-w64-ucrt-x86_64-meson'        # fzssh is a Meson project
     'mingw-w64-ucrt-x86_64-python'       # Meson's interpreter
     'mingw-w64-ucrt-x86_64-pkgconf'      # FileZilla's configure.ac requires it
+    # 7-Zip, for the .7z overlay archive and for unpacking the NSIS installer.
+    # This is current 7-Zip and has the PE/NSIS handlers; the msys/p7zip package
+    # is an older fork without them and cannot open an NSIS setup .exe.
+    'mingw-w64-ucrt-x86_64-7zip'
 
     # archive decoders: /usr/bin/tar shells out to the compressor's helper program
     # (bzip2/xz), so a fresh MSYS2 without these dies with

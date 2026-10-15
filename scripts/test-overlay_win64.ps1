@@ -209,11 +209,13 @@ if (-not (Test-Path -LiteralPath $Archive)) {
     throw "archive not found: $Archive (run build-overlay_win64.ps1 first)"
 }
 
-$sevenZip = 'C:\Program Files\7-Zip\7z.exe'
-if (-not (Test-Path -LiteralPath $sevenZip)) {
+if (-not (Test-Path -LiteralPath $SevenZipExe)) {
     $found = Get-Command 7z.exe -ErrorAction SilentlyContinue
-    if (-not $found) { throw "7-Zip not found and 7z.exe is not on PATH" }
+    if (-not $found) { throw "7-Zip not found at $SevenZipExe and 7z.exe is not on PATH. Run install-toolchain_win64.ps1 first." }
     $sevenZip = $found.Source
+}
+else {
+    $sevenZip = $SevenZipExe
 }
 
 # t = test the archive without extracting. A truncated or malformed archive is the

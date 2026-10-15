@@ -64,10 +64,9 @@ param(
     [switch]$SkipOverlay,
     # Skip the 7z archive. The NSIS .exe is the distribution form and is always built; this
     # flag only drops the .7z, which is the manual extract-over-your-installation route.
-    # With it, 7-Zip is not needed on the build machine at all.
     #
-    # 7-Zip stays in the default bootstrap because it is a small install, and some people
-    # will want the .7z; -No7z is for build machines that would rather not have it.
+    # Worth keeping either way: the .7z is the only route that needs nothing installed on the
+    # target machine at all, and it ships the PowerShell installer and the licence texts.
     [Alias('NoSevenZipArchive')]
     [switch]$No7z,
     [switch]$Force,

@@ -9,10 +9,8 @@
 
       PowerShell 7   Windows 11 ships only Windows PowerShell 5.1. The build scripts
                      need pwsh, so this script runs under 5.1 and then installs 7.
-      Git            Needed for the patch series. Not present on a fresh install.
-      7-Zip          Only needed to build the optional 7z overlay archive; the NSIS
-                installer .exe needs neither 7-Zip nor PowerShell. Not present.
-      MSYS2          install-toolchain_win64.ps1 installs pacman packages *into*
+Git            Needed for the patch series. Not present on a fresh install.
+MSYS2          install-toolchain_win64.ps1 installs pacman packages *into*
                      MSYS2 and throws if C:\msys64 is missing. It does not install
                      MSYS2 itself.
       wxWidgets      build-wx_win64.ps1 throws unless C:\wxWidgets-<ver> is already
@@ -42,7 +40,7 @@
     Run this first if you are unsure.
 
 .PARAMETER Skip
-    Components to skip entirely. Valid: Pwsh, Git, SevenZip, Msys2, WxWidgets.
+    Components to skip entirely. Valid: Pwsh, Git, Msys2, WxWidgets.
 
 .PARAMETER ThenBuild
     After a successful bootstrap, launch install-filezilla-dark_win64.ps1 under pwsh.
@@ -140,24 +138,6 @@ function Probe-Git {
     return $null
 }
 
-function Probe-SevenZip {
-    $candidates = @()
-    if (Test-Path -LiteralPath $SevenZipExe) { $candidates += $SevenZipExe }
-    $onPath = Get-Command 7z.exe -ErrorAction SilentlyContinue
-    if ($onPath) { $candidates += $onPath.Source }
-
-    foreach ($c in ($candidates | Select-Object -Unique)) {
-        try {
-            # 7z prints a blank line before its banner, so the first line is not the
-            # version - filter empties out rather than trusting position 1.
-            $v = (& $c 2>$null | Where-Object { "$_".Trim() } | Select-Object -First 1 | Out-String).Trim()
-            if ($v) { return @{ Path = $c; Version = $v } }
-        }
-        catch { }
-    }
-    return $null
-}
-
 function Probe-Msys2 {
     # Both halves must work: a missing pacman means install-toolchain cannot run,
     # and pacman present but uninitialised fails in confusing ways.
@@ -190,7 +170,6 @@ function Probe-WxWidgets {
 $Components = @(
     @{ Key = 'Pwsh';     Name = 'PowerShell 7';  Want = $PwshVersion;     Probe = { Probe-Pwsh } }
     @{ Key = 'Git';      Name = 'Git';           Want = $GitVersion;      Probe = { Probe-Git } }
-    @{ Key = 'SevenZip'; Name = '7-Zip';         Want = $SevenZipVersion; Probe = { Probe-SevenZip } }
     @{ Key = 'Msys2';    Name = 'MSYS2 / UCRT64'; Want = $Msys2Stamp;     Probe = { Probe-Msys2 } }
     @{ Key = 'WxWidgets';Name = "wxWidgets $WxVersion"; Want = $WxVersion; Probe = { Probe-WxWidgets } }
 )
@@ -404,23 +383,6 @@ if ($toInstall | Where-Object { $_.Key -eq 'Git' }) {
         }
     }
     catch { Add-Failure 'Git' $_.Exception.Message }
-}
-
-if ($toInstall | Where-Object { $_.Key -eq 'SevenZip' }) {
-    Step '7-Zip'
-    try {
-        $exe = Get-Artifact -Name $SevenZipFile -Url $SevenZipUrl -Sha256 $SevenZipSha256 -Size $SevenZipSize
-        Info 'installing (NSIS, silent)'
-        $p = Start-Process -FilePath $exe -ArgumentList @('/S') -Wait -PassThru
-        if ($p.ExitCode -ne 0) {
-            Add-Failure '7-Zip' "installer exited $($p.ExitCode)"
-        }
-        else {
-            $r = Probe-SevenZip
-            if ($r) { Good "installed: $($r.Path)" } else { Add-Failure '7-Zip' "installer ran but 7z.exe is not at $SevenZipExe" }
-        }
-    }
-    catch { Add-Failure '7-Zip' $_.Exception.Message }
 }
 
 if ($toInstall | Where-Object { $_.Key -eq 'Msys2' }) {

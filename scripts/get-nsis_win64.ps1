@@ -163,12 +163,20 @@ Write-Step "verified $($NsisFile) sha256"
 Remove-Item -LiteralPath $nsisDir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $nsisDir | Out-Null
 
-# 7-Zip unpacks an NSIS setup fine. It is the one hard dependency of this script, and
-# bootstrap_win64.ps1 already installs it.
+# 7-Zip unpacks an NSIS setup fine. It is not installed separately: $SevenZipExe points
+# into the MSYS2 toolchain, whose mingw-w64-ucrt-x86_64-7zip package is already a build
+# requirement, and install-toolchain_win64.ps1 puts it on PATH.
 if (-not (Test-Path -LiteralPath $SevenZipExe)) {
-    throw "7-Zip not found at $SevenZipExe - needed to unpack $($NsisFile). Run bootstrap_win64.ps1, or pass -SevenZipExe."
+    $found = Get-Command 7z.exe -ErrorAction SilentlyContinue
+    if (-not $found) {
+        throw "7-Zip not found at $SevenZipExe and 7z.exe is not on PATH. Run install-toolchain_win64.ps1, which installs $SevenZipPacmanPackage."
+    }
+    $sevenZip = $found.Source
 }
-& $SevenZipExe x $archive "-o$nsisDir" -y -bso0 -bsp0
+else {
+    $sevenZip = $SevenZipExe
+}
+& $sevenZip x $archive "-o$nsisDir" -y -bso0 -bsp0
 if ($LASTEXITCODE -ne 0) { throw "7-Zip failed to unpack $($NsisFile) (exit $LASTEXITCODE)" }
 
 if (-not (Test-Path -LiteralPath $NsisExe)) {

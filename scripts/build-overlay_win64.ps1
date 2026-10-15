@@ -439,13 +439,20 @@ if ($NoArchive) {
 # deflate squeezes almost nothing out of it, and the LZMA2 solid mode 7-Zip uses
 # by default still does better on the icon PNGs. More to the point, 7z preserves
 # the empty-directory and permission metadata that a Windows drop-in wants intact.
-$sevenZip = 'C:\Program Files\7-Zip\7z.exe'
-if (-not (Test-Path -LiteralPath $sevenZip)) {
+#
+# $SevenZipExe points into the MSYS2 toolchain rather than Program Files: 7-Zip is
+# not installed separately, it arrives as the mingw-w64-ucrt-x86_64-7zip package.
+if (-not (Test-Path -LiteralPath $SevenZipExe)) {
     $found = Get-Command 7z.exe -ErrorAction SilentlyContinue
-    if (-not $found) {
-        throw "7-Zip not found at $sevenZip and 7z.exe is not on PATH. Install 7-Zip, point $sevenZip at it, or pass -NoArchive to build only the NSIS installer."
+    if ($found) {
+        $sevenZip = $found.Source
     }
-    $sevenZip = $found.Source
+    else {
+        throw "7-Zip not found at $SevenZipExe and 7z.exe is not on PATH. Run install-toolchain_win64.ps1, which installs $SevenZipPacmanPackage, or pass -NoArchive to build only the NSIS installer."
+    }
+}
+else {
+    $sevenZip = $SevenZipExe
 }
 
 $archive = Join-Path $OutputDir $OverlayName
