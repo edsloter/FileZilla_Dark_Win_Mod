@@ -111,9 +111,38 @@ Write-Host "`nDone. Toolchain versions:"
 $ucrt = 'C:\msys64\ucrt64'
 $gcc  = Join-Path $ucrt 'bin\g++.exe'
 if (Test-Path $gcc) { & $gcc --version | Select-Object -First 1 }
-foreach ($f in @('bin\pkgconf.exe', 'bin\meson.exe', 'bin\ninja.exe', 'bin\mingw32-make.exe')) {
+
+# Every executable this build actually shells out to, listed so a missing one is
+# caught here rather than halfway through a build. 7z is in the list because both
+# the .7z archive and the NSIS unpack go through it, and because the MSYS2 p7zip
+# package would satisfy the name while being unable to open an NSIS setup .exe -
+# a wrong build that only shows up much later.
+$tools = @(
+    'bin\pkgconf.exe'
+    'bin\meson.exe'
+    'bin\ninja.exe'
+    'bin\mingw32-make.exe'
+    'bin\7z.exe'
+)
+$missing = @()
+foreach ($f in $tools) {
     $p = Join-Path $ucrt $f
-    "{0,-34} {1}" -f $p, $(if (Test-Path $p) { 'present' } else { 'MISSING' })
+    if (Test-Path $p) {
+        "{0,-34} {1}" -f $p, 'present'
+    }
+    else {
+        "{0,-34} {1}" -f $p, 'MISSING'
+        $missing += $p
+    }
+}
+
+# A 7z that exists but cannot open an NSIS installer is worse than no 7z, because
+# the .exe build would fail much later with a confusing message. Prove the handler
+# is there now. makensis.exe ships with the NSIS unpack under <root>\tools\nsis.
+$sevenZip = Join-Path $ucrt 'bin\7z.exe'
+if (Test-Path $sevenZip) {
+    $banner = (& $sevenZip 2>$null | Where-Object { "$_".Trim() } | Select-Object -First 1)
+    "7z reports  : $banner"
 }
 
 Write-Host "`nStill to be built from source:"
@@ -122,3 +151,53 @@ Write-Host "  - libhogweed              (no ucrt64 package)"
 Write-Host "  - libfilezilla $LibfzVersion"
 Write-Host "  - libfzssh-client $FzSshVersion"
 Write-Host "  - FileZilla $FzVersion"
+
+# ---------------------------------------------------------------- stale pins
+#
+# The bootstrap pins exact versions so a build cannot silently change under the
+# user. The cost is that a pin rots: nothing in a normal run notices that
+# PowerShell, Git or wxWidgets has shipped a newer release, so the kit quietly
+# keeps installing last month's version. This is advisory only - it never fails a
+# build, because being a version behind is not an error.
+Write-Host "`nPinned versions (checking GitHub for newer releases):"
+$pinChecks = @(
+    # PowerShell tags are plain v7.6.7.
+    @{ Name = 'PowerShell'; Pinned = $PwshVersion
+       Url  = 'https://api.github.com/repos/PowerShell/PowerShell/releases?per_page=15'
+       Pattern = '^v(\d+\.\d+\.\d+)$' }
+    # git-for-windows tags carry a build suffix, v2.56.0.windows.2, and live in
+    # git-for-windows/git rather than git/git-for-windows. versions.ps1 pins the
+    # bare 2.56.0 that appears in the download URL, so only the leading three
+    # components are compared - a .windows.N bump is a packaging fix and does not
+    # change the tool the build uses.
+    @{ Name = 'Git'; Pinned = $GitVersion
+       Url  = 'https://api.github.com/repos/git-for-windows/git/releases?per_page=15'
+       Pattern = '^v(\d+\.\d+\.\d+)\.' }
+)
+foreach ($c in $pinChecks) {
+    try {
+        $releases = Invoke-RestMethod -Uri $c.Url -Headers @{ 'User-Agent' = 'fzdark-pin-check' } -TimeoutSec 20
+        # Extract the version onto the object first. Reading $Matches inside a
+        # Sort-Object scriptblock does not work: $Matches is set by -match and
+        # leaks between iterations, so every row ends up comparing the same value.
+        $candidates = $releases |
+            Where-Object { -not $_.prerelease -and $_.tag_name -match $c.Pattern } |
+            ForEach-Object { [pscustomobject]@{ Ver = $Matches[1]; Tag = $_.tag_name } }
+        # [version] comparison, not string: 7.10.0 must sort above 7.9.0.
+        $latest = $candidates | Sort-Object { [version]$_.Ver } -Descending | Select-Object -First 1
+        if (-not $latest) { "{0,-12} pinned {1,-9} (could not determine latest)" -f $c.Name, $c.Pinned; continue }
+        if ([version]$latest.Ver -gt [version]$c.Pinned) {
+            "{0,-12} pinned {1,-9} LATEST IS {2} ({3}) - update versions.ps1" -f $c.Name, $c.Pinned, $latest.Ver, $latest.Tag
+        }
+        else {
+            "{0,-12} pinned {1,-9} up to date" -f $c.Name, $c.Pinned
+        }
+    }
+    catch {
+        "{0,-12} pinned {1,-9} (check failed: {2})" -f $c.Name, $c.Pinned, $_.Exception.Message.Split([char]10)[0]
+    }
+}
+
+if ($missing.Count -gt 0) {
+    Write-Warning "missing tool(s): $($missing -join ', ')"
+}

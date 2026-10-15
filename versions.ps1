@@ -138,11 +138,11 @@ $SqliteSha512Provenance = 'recorded'
 # Versions are frozen rather than "latest" so the bootstrap cannot silently change
 # under the user. Digests are SHA-256, taken from the exact bytes verified here.
 
-$PwshVersion = '7.6.6'
+$PwshVersion = '7.6.7'
 $PwshFile    = "PowerShell-$($PwshVersion)-win-x64.msi"
 $PwshUrl     = "https://github.com/PowerShell/PowerShell/releases/download/v$PwshVersion/$PwshFile"
-$PwshSize    = 117477376
-$PwshSha256  = '958838ff55091e1c8705d89efed0cc7e8245a3a6ef6c0ccfae20015227108ad8'
+$PwshSize    = 117514240
+$PwshSha256  = 'ec575cef9ec56fcd905de0d5eeac9cb7f81a0a65abb87bb5cd0e87fdfe2b8cc0'
 
 $GitVersion = '2.56.0'
 $GitFile    = "Git-$($GitVersion)-64-bit.exe"
