@@ -138,16 +138,19 @@ function Warn { param([string]$m) Write-Host "   $m" -ForegroundColor Yellow }
 
 function Invoke-Step {
     <#
-        Run one build step in a child pwsh process, streaming its output to the
+        Run one build step in a child PowerShell process, streaming its output to the
         console and to a log, and stop immediately if it fails.
 
         A separate process rather than a plain call, because several of these steps
         set environment variables and change directory: done in-process, those would
         leak into later steps and make the run order matter in ways nothing documents.
 
-        ErrorActionPreference=Stop is passed explicitly so a step that throws is
-        caught here and reported with its log path, instead of a native exit code
-        that PowerShell would otherwise treat as success.
+        The child is whichever host is running this script, taken from the current
+        process rather than a hardcoded path. That means a step always runs on the
+        same PowerShell edition as the orchestrator itself, and that someone who
+        starts the orchestrator under pwsh 7 gets 7 for every step rather than being
+        silently moved back to 5.1. -NoProfile keeps a user profile from leaking in,
+        and -NonInteractive stops a step stopping to prompt on a build machine.
     #>
     param(
         [string]$Script,
@@ -161,13 +164,19 @@ function Invoke-Step {
     Info "log: $log"
     if (Test-Path -LiteralPath $log) { Remove-Item -LiteralPath $log -Force }
 
-    $pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
-    if (-not $pwsh) { $pwsh = (Get-Process -Id $PID).Path }
-    if (-not $pwsh) { throw 'could not locate pwsh.exe to run a build step' }
+    # The host running us. Falls back to the registry-free SystemRoot path so this
+    # still works if the process object cannot be read.
+    $host_exe = $null
+    try { $host_exe = (Get-Process -Id $PID -ErrorAction Stop).Path } catch { }
+    if (-not $host_exe) {
+        $candidate = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (Test-Path -LiteralPath $candidate) { $host_exe = $candidate }
+    }
+    if (-not $host_exe) { throw "could not determine the path of the running PowerShell host to run a build step with" }
 
-    $argList = @('-NoProfile', '-NonInteractive', '-File', $Script) + $Arguments
+    $argList = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $Script) + $Arguments
 
-    $proc = Start-Process -FilePath $pwsh -ArgumentList $argList -NoNewWindow -Wait -PassThru `
+    $proc = Start-Process -FilePath $host_exe -ArgumentList $argList -NoNewWindow -Wait -PassThru `
         -RedirectStandardOutput $log -RedirectStandardError "$log.err"
 
     # Show the user what happened, including a tail of anything on stderr.

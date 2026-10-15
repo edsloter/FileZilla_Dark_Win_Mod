@@ -223,7 +223,7 @@ Write-Host '    $FzSourceSize     byte size of the tarball'
 Write-Host '    $FzSourceSha512   SHA-512 of the tarball'
 Write-Host ''
 Write-Host '  Then:'
-Write-Host "    pwsh -File .\scripts\source-manifest_win64.ps1 -Mode Verify ``"
+  Write-Host "    powershell -File .\scripts\source-manifest_win64.ps1 -Mode Verify ``"
 Write-Host "         -Tree `$SourceTree -Manifest .\manifests\filezilla-$Version.sources.sha256"
 Write-Host ''
 Write-Host '  and rebuild from scratch. The tree hash gate at step 6 will refuse to'

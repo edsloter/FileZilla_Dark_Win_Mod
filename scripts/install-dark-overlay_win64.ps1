@@ -19,9 +19,9 @@
     ships inside the same 7z archive. Nothing is hardcoded here, so a new release is
     a one-file change plus a rebuild.
 
-    Runs under Windows PowerShell 5.1, because the machine receiving the overlay may
-    not have PowerShell 7 installed - this is a file-copy operation and has no
-    reason to demand a newer shell.
+  Runs under Windows PowerShell 5.1, which is what Windows ships, because the
+  machine receiving the overlay may have nothing else installed - this is a
+  file-copy operation and has no reason to demand a newer shell.
 
 .PARAMETER InstallDir
     FileZilla installation directory. Autodetected when omitted.

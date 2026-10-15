@@ -259,7 +259,7 @@ foreach ($stock in $AliasSources.Keys) {
 
 # Everything chosen not to ship has to be present in a stock Windows build,
 # otherwise the overlay would depend on files that may not exist.
-Write-Step "reusing from the stock install: $($thirdParty | Where-Object { $StockProvided -contains $_ } | Join-String -Separator ', ')"
+Write-Step "reusing from the stock install: $((@($thirdParty | Where-Object { $StockProvided -contains $_ })) -join ', ')"
 
 # ------------------------------------------------- stage
 
@@ -384,7 +384,7 @@ $readme = @(
     '  routes install exactly the same files.'
     ''
     'INSTALL, THE REVERSIBLE WAY'
-    '  Extract this 7z archive anywhere, then run PowerShell 7 in that folder:'
+    '  Extract this 7z archive anywhere, then run this in that folder:'
     '      .\install-dark-overlay_win64.ps1'
     ("  It finds your FileZilla installation, checks it really is $FzVersion, backs up")
     '  every file it replaces into <FileZilla>\fzdark-backup\, and copies the'

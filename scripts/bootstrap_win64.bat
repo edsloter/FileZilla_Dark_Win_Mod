@@ -1,12 +1,10 @@
 @echo off
 setlocal
+rem Windows PowerShell 5.1 is what Windows ships, so it is the only host needed.
+rem Preferred over pwsh when both are present so a run behaves identically
+rem wherever it happens.
 set "SELF=%~dp0bootstrap_win64.ps1"
-where pwsh.exe >nul 2>nul
-if %ERRORLEVEL%==0 (
-    pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "%SELF%" %*
-) else (
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SELF%" %*
-)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SELF%" %*
 endlocal & (
     exit /b %ERRORLEVEL%
 )

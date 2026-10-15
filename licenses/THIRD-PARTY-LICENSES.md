@@ -42,7 +42,9 @@ redistributes none of them.
     LZMA compression module - the one makensis uses for our installer - is
     CPL-1.0, and bzip2 is bzip2-licensed.
 - Git for Windows: GPLv2, `C:\Program Files\Git\LICENSE.md`.
-- PowerShell 7: MIT, `C:\Program Files\PowerShell\7\LICENSE.txt`.
+
+PowerShell is not listed: the scripts run on the Windows PowerShell 5.1 that
+ships with Windows, so the kit neither installs nor redistributes a shell.
 
 ## About the license of this kit itself
 

@@ -7,16 +7,21 @@
     A fresh Windows 11 install has none of what this build needs, and no build
     script can install any of it:
 
-      PowerShell 7   Windows 11 ships only Windows PowerShell 5.1. The build scripts
-                     need pwsh, so this script runs under 5.1 and then installs 7.
-Git            Needed for the patch series. Not present on a fresh install.
-MSYS2          install-toolchain_win64.ps1 installs pacman packages *into*
+      Git            Needed for the patch series. Not present on a fresh install.
+      MSYS2          install-toolchain_win64.ps1 installs pacman packages *into*
                      MSYS2 and throws if C:\msys64 is missing. It does not install
                      MSYS2 itself.
       wxWidgets      build-wx_win64.ps1 throws unless C:\wxWidgets-<ver> is already
                      unpacked. 3.3 is mandatory, not a preference: configure.ac
                      rejects 3.2, and 3.3 is what implements the system light/dark
                      appearance this project exists to provide.
+
+    PowerShell itself is deliberately absent from that list. Everything here runs
+    on Windows PowerShell 5.1, which ships with Windows, so there is nothing to
+    download and nothing to install - the whole kit is buildable with what the
+    machine already has. A newer PowerShell 7 works too if it happens to be
+    installed, because each script launches its children using whichever host is
+    already running.
 
     Nothing is installed unless it is genuinely absent.
 
@@ -28,9 +33,10 @@ MSYS2          install-toolchain_win64.ps1 installs pacman packages *into*
     PATH even though it works fine in a new terminal - reinstalling in that case
     would be pure waste.
 
-    If a component is present but older than the pinned version it is KEPT, not
-    replaced: PowerShell 7.5 builds this project perfectly well, and downgrading a
-    user's machine to match a pin would be rude and pointless.
+    If a component is present but a different version from the pin, it is KEPT,
+    not replaced: an older Git applies the patch series perfectly well, and
+    downgrading a user's machine to match a pin would be rude and pointless. The
+    pin records which bytes were audited, not a requirement.
 
 .PARAMETER Root
     Build tree. Defaults to C:\fzdark. Must match the orchestrator's -Root.
@@ -40,10 +46,10 @@ MSYS2          install-toolchain_win64.ps1 installs pacman packages *into*
     Run this first if you are unsure.
 
 .PARAMETER Skip
-    Components to skip entirely. Valid: Pwsh, Git, Msys2, WxWidgets.
+    Components to skip entirely. Valid: Git, Msys2, WxWidgets.
 
 .PARAMETER ThenBuild
-    After a successful bootstrap, launch install-filezilla-dark_win64.ps1 under pwsh.
+    After a successful bootstrap, launch install-filezilla-dark_win64.ps1.
 
 .PARAMETER Force
     Reinstall components even if the probe found a working copy.
@@ -94,29 +100,27 @@ function Warn2 { param([string]$m) Write-Host "    !!  $m" -ForegroundColor Yell
 $script:Failures = New-Object System.Collections.ArrayList
 function Add-Failure { param([string]$Step, [string]$Message) [void]$script:Failures.Add("$Step : $Message") }
 
+function Get-HostPath {
+    # The PowerShell running this script, used to launch the child scripts below.
+    #
+    # Windows PowerShell 5.1 ships with Windows, so there is never a need to go
+    # looking for a particular host - but the running one is still the right answer,
+    # because it means a child step runs on the same edition as its parent. Someone
+    # who starts the bootstrap under pwsh 7 gets 7 throughout instead of being moved
+    # back to 5.1 halfway through.
+    $exe = $null
+    try { $exe = (Get-Process -Id $PID -ErrorAction Stop).Path } catch { }
+    if (-not $exe) {
+        $fallback = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (Test-Path -LiteralPath $fallback) { $exe = $fallback }
+    }
+    return $exe
+}
+
 # --------------------------------------------------------------------- probes
 #
 # Each probe returns $null when the component is unusable, or a hashtable
 # describing what was found. "Usable" means the tool was executed and answered.
-
-function Probe-Pwsh {
-    # Standard install location first, then PATH. Get-Command alone misses a pwsh
-    # installed after this terminal opened.
-    $candidates = @()
-    $std = Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'
-    if (Test-Path -LiteralPath $std) { $candidates += $std }
-    $onPath = Get-Command pwsh.exe -ErrorAction SilentlyContinue
-    if ($onPath) { $candidates += $onPath.Source }
-
-    foreach ($c in ($candidates | Select-Object -Unique)) {
-        try {
-            $v = (& $c -NoProfile -Command '$PSVersionTable.PSVersion.ToString()' 2>$null | Out-String).Trim()
-            if ($v) { return @{ Path = $c; Version = $v } }
-        }
-        catch { }
-    }
-    return $null
-}
 
 function Probe-Git {
     $candidates = @()
@@ -168,7 +172,6 @@ function Probe-WxWidgets {
 }
 
 $Components = @(
-    @{ Key = 'Pwsh';     Name = 'PowerShell 7';  Want = $PwshVersion;     Probe = { Probe-Pwsh } }
     @{ Key = 'Git';      Name = 'Git';           Want = $GitVersion;      Probe = { Probe-Git } }
     @{ Key = 'Msys2';    Name = 'MSYS2 / UCRT64'; Want = $Msys2Stamp;     Probe = { Probe-Msys2 } }
     @{ Key = 'WxWidgets';Name = "wxWidgets $WxVersion"; Want = $WxVersion; Probe = { Probe-WxWidgets } }
@@ -347,26 +350,6 @@ function Sync-Path {
                 [Environment]::GetEnvironmentVariable('Path', 'User')
 }
 
-if ($toInstall | Where-Object { $_.Key -eq 'Pwsh' }) {
-    Step 'PowerShell 7'
-    try {
-        $msi = Get-Artifact -Name $PwshFile -Url $PwshUrl -Sha256 $PwshSha256 -Size $PwshSize
-        $log = Join-Path $DownloadDir 'pwsh-install.log'
-        Info 'installing (msiexec, silent)'
-        $p = Start-Process -FilePath 'msiexec.exe' `
-            -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart', '/l*v', "`"$log`"") -Wait -PassThru
-        if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
-            Add-Failure 'PowerShell 7' "msiexec exited $($p.ExitCode); see $log"
-        }
-        else {
-            Sync-Path
-            $r = Probe-Pwsh
-            if ($r) { Good "installed: $($r.Version)" } else { Add-Failure 'PowerShell 7' 'installed but pwsh.exe is not usable; open a new terminal and re-run' }
-        }
-    }
-    catch { Add-Failure 'PowerShell 7' $_.Exception.Message }
-}
-
 if ($toInstall | Where-Object { $_.Key -eq 'Git' }) {
     Step 'Git'
     try {
@@ -425,30 +408,25 @@ if ($toInstall | Where-Object { $_.Key -eq 'Msys2' }) {
 }
 
 if ($toInstall | Where-Object { $_.Key -eq 'WxWidgets' }) {
-    Step "wxWidgets $WxVersion"
-    # fetch-deps and extract-deps already know how to get and unpack this with the
-    # pinned SHA-512, including mirror fallback. Reuse them rather than duplicating
-    # the URL and digest here.
-    $pwshCmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue
-    if (-not $pwshCmd) { $pwshCmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue }
-    if (-not $pwshCmd) {
-        $std = Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'
-        if (Test-Path -LiteralPath $std) { $pwshCmd = @{ Source = $std } }
-    }
-    if (-not $pwshCmd) {
-        Add-Failure "wxWidgets $WxVersion" 'needs pwsh to run fetch-deps/extract-deps; install PowerShell 7 first, then re-run'
-    }
-    else {
-        try {
-    Info 'fetching and unpacking via fetch-deps / extract-deps'
-    # Both get -Keep: fetch-deps would otherwise delete the very archives its own
-    # cleanup phase runs, and extract-deps unpacks from those archives, so running
-    # them without -Keep discards exactly what the next stage of this same bootstrap
-    # (and the later FileZilla build) needs.
-    & $pwshCmd.Source -NoProfile -File (Join-Path $ScriptsDir 'fetch-deps_win64.ps1') -Root $Root -Keep
-    if ($LASTEXITCODE -ne 0) { throw "fetch-deps exited $LASTEXITCODE" }
-    & $pwshCmd.Source -NoProfile -File (Join-Path $ScriptsDir 'extract-deps_win64.ps1') -Root $Root -Only wx -Keep
-    if ($LASTEXITCODE -ne 0) { throw "extract-deps exited $LASTEXITCODE" }
+        Step "wxWidgets $WxVersion"
+        # fetch-deps and extract-deps already know how to get and unpack this with the
+        # pinned SHA-512, including mirror fallback. Reuse them rather than duplicating
+        # the URL and digest here.
+        $hostExe = Get-HostPath
+        if (-not $hostExe) {
+            Add-Failure "wxWidgets $WxVersion" 'could not determine the path of the running PowerShell to fetch and unpack with'
+        }
+        else {
+            try {
+                Info 'fetching and unpacking via fetch-deps / extract-deps'
+                # Both get -Keep: fetch-deps would otherwise delete the very archives its own
+                # cleanup phase runs, and extract-deps unpacks from those archives, so running
+                # them without -Keep discards exactly what the next stage of this same bootstrap
+                # (and the later FileZilla build) needs.
+                & $hostExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ScriptsDir 'fetch-deps_win64.ps1') -Root $Root -Keep
+                if ($LASTEXITCODE -ne 0) { throw "fetch-deps exited $LASTEXITCODE" }
+                & $hostExe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ScriptsDir 'extract-deps_win64.ps1') -Root $Root -Only wx -Keep
+                if ($LASTEXITCODE -ne 0) { throw "extract-deps exited $LASTEXITCODE" }
 
             $r = Probe-WxWidgets
             if ($r) { Good "ready: $($r.Version)" } else { Add-Failure "wxWidgets $WxVersion" "unpacked but the expected files are missing from $WxRoot" }
@@ -471,17 +449,22 @@ if ($ThenBuild -and $script:Failures.Count -eq 0) {
     }
     else {
         Write-Host ''
-        Write-Host 'Launching the build...' -ForegroundColor Cyan
-        $pwshCmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue
-        if (-not $pwshCmd) { $pwshCmd = @{ Source = (Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe') } }
-        # Under pwsh, not &, so the orchestrator's exit code becomes ours and a
-        # failing build is not reported as a successful bootstrap.
-        & $pwshCmd.Source -NoProfile -File $build -Root $Root
-        $code = $LASTEXITCODE
-        Write-Host ''
-        if ($code -eq 0) { Good 'build finished successfully' }
-        else { Add-Failure 'build' "install-filezilla-dark_win64.ps1 exited $code" }
-    }
+            Write-Host 'Launching the build...' -ForegroundColor Cyan
+            $hostExe = Get-HostPath
+            if (-not $hostExe) {
+                Add-Failure 'build' 'could not determine the path of the running PowerShell to launch the build with'
+            }
+            else {
+                # A child process rather than &, so the orchestrator's exit code
+                # becomes ours and a failing build is not reported as a successful
+                # bootstrap.
+                & $hostExe -NoProfile -ExecutionPolicy Bypass -File $build -Root $Root
+                $code = $LASTEXITCODE
+                Write-Host ''
+                if ($code -eq 0) { Good 'build finished successfully' }
+                else { Add-Failure 'build' "install-filezilla-dark_win64.ps1 exited $code" }
+            }
+        }
 }
 
 Write-Host ''
@@ -498,26 +481,21 @@ elseif ($script:DownloadedInstallers.Count -gt 0) {
 if ($script:Failures.Count -eq 0) {
     Write-Host 'Bootstrap complete. The build should now run:' -ForegroundColor Green
     Write-Host ''
-    Write-Host "    pwsh -File `"$ScriptsDir\install-filezilla-dark_win64.ps1`" -Root `"$Root`""
+    Write-Host "    powershell -File `"$ScriptsDir\install-filezilla-dark_win64.ps1`" -Root `"$Root`""
     Write-Host ''
 
-    # A freshly installed PS7 is not on this console's PATH, so resolve the
-    # binary explicitly; otherwise the next line is 'pwsh is not recognized'.
-    $pwshPath = $null
-    $pwshCmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue
-    if ($pwshCmd) { $pwshPath = $pwshCmd.Source }
-    if (-not $pwshPath) {
-        $candidate = Join-Path $env:ProgramFiles 'PowerShell\7\pwsh.exe'
-        if (Test-Path -LiteralPath $candidate) { $pwshPath = $candidate }
-    }
-    if ($pwshPath) {
+    # Windows PowerShell 5.1 is on every supported Windows, so there is no
+    # discovery to do and no reason this can be skipped: if the host running the
+    # bootstrap can be named, the build can be started from it.
+    $hostExe = Get-HostPath
+    if ($hostExe) {
         $reply = Read-Host 'Run that build command now? [Y/N]'
         if ($reply -match '^[Yy]') {
-            Write-Host "`nStarting the build via $pwshPath ..." -ForegroundColor Cyan
+            Write-Host "`nStarting the build via $hostExe ..." -ForegroundColor Cyan
             $buildArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                 (Join-Path $ScriptsDir 'install-filezilla-dark_win64.ps1'), '-Root', $Root)
             if ($Keep) { $buildArgs += '-Keep' }
-            & $pwshPath @buildArgs
+            & $hostExe @buildArgs
             exit $LASTEXITCODE
         }
     }

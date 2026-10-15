@@ -45,18 +45,17 @@ wx 3.2 fails at load time.
 
 ## Quick start
 
-**1. Bootstrap**, from an elevated PowerShell (5.1 is fine — nothing here needs 7 for
-the bootstrap itself):
+**1. Bootstrap**, from an elevated PowerShell:
 
     powershell -File .\scripts\bootstrap_win64.ps1
 
-Installs and hash-verifies PowerShell 7, Git, MSYS2 and wxWidgets 3.3.3.
-Re-running is safe; finished steps are skipped. `-Plan` prints what is missing without
-installing anything, and needs no admin.
+Installs and hash-verifies Git, MSYS2 and wxWidgets 3.3.3. Re-running is safe;
+finished steps are skipped. `-Plan` prints what is missing without installing
+anything, and needs no admin.
 
-**2. Build**, under PowerShell 7:
+**2. Build**, in the same shell:
 
-    pwsh -File .\scripts\install-filezilla-dark_win64.ps1
+    powershell -File .\scripts\install-filezilla-dark_win64.ps1
 
 Eleven steps: toolchain, dependencies, wxWidgets, libfilezilla/libfzssh, upstream
 source, patch series, icon variants, FileZilla, verification, overlay, NSIS installer.
@@ -106,7 +105,7 @@ It requires administrator rights and will not run without them.
 
     .\install-dark-overlay_win64.ps1
 
-Same checks and backup, driven from PowerShell 7. Undo with the same script plus
+Same checks and backup, driven from PowerShell. Undo with the same script plus
 `-Uninstall`, which restores the installation byte for byte.
 
 ## Things worth knowing before you ship or automate
@@ -131,35 +130,6 @@ Same checks and backup, driven from PowerShell 7. Undo with the same script plus
   Program Files, Program Files (x86), `%LOCALAPPDATA%`, `%LOCALAPPDATA%\Programs`. The
   directory page lets you override it. An empty `/D=` is indistinguishable from passing
   none, so a script with an unset variable silently gets auto-detection.
-
-## What is pinned, and what tracks the latest
-
-Two different rules, because the two kinds of tool fail differently.
-
-**Pinned exactly** — PowerShell, Git, wxWidgets, NSIS, and every source tarball. Each has a
-version, URL, size and digest in `versions.ps1`, and the bootstrap installs that exact bytes.
-A build therefore cannot change under you because Microsoft published a new PowerShell the
-morning you ran it.
-
-The cost is that a pin rots unnoticed. `install-toolchain_win64.ps1` queries GitHub after
-installing and prints `up to date` or `LATEST IS x.y.z - update versions.ps1` for PowerShell
-and Git. **It reports; it never upgrades.** Updating a pin is a deliberate edit to the
-audited record, not something a build does behind your back.
-
-**Always the repo's current version** — the MSYS2 UCRT64 toolchain: gcc, binutils, meson,
-ninja, 7-Zip and the rest. `pacman -S --needed` would only install these if *missing*, so a
-machine that bootstrapped months ago would keep building with the compiler it installed then.
-MSYS2 patches its compiler in place, and a stale one is a hazard rather than a
-reproducibility guarantee, so the bootstrap refreshes the sync databases (`pacman -Sy`) and
-runs `pacman -S --needed -u` over `gcc`, `gcc-libs`, `binutils` and the gcc headers as one
-group.
-
-That group matters: a newer `g++` beside an older `cc1plus` or `libgcc` is the mismatch that
-produces `error: command failed to execute correctly` from pacman and much more confusing
-failures later. The script checks the installed versions agree and warns if they do not.
-
-So: **the compiler is whatever MSYS2 currently ships; PowerShell and Git are whatever
-`versions.ps1` says, with a nudge when that falls behind.**
 
 ## Elevation
 
@@ -193,8 +163,8 @@ go back to the network, or use `-Force`. Names and sizes are pinned in `versions
 
 ## Test it
 
-    pwsh -File .\scripts\test-overlay_win64.ps1
-    pwsh -File .\scripts\test-nsis-installer_win64.ps1
+    powershell -File .\scripts\test-overlay_win64.ps1
+    powershell -File .\scripts\test-nsis-installer_win64.ps1
 
 The first runs four phases against real copies of an actual FileZilla 3.71.1
 installation: payload extraction, script install, uninstall-and-restore, and a round trip
@@ -291,7 +261,7 @@ Read the output in this order:
 
 The `-3` flag is what makes most bumps routine: every patch carries git blob hashes, so a hunk
 whose surrounding lines merely *moved* merges instead of failing. The version that breaks this
-way is one where upstream rewrote the lines a patch depends on, which is exactly when a human
+way is one where upstream rewrote the lines a patch depends on, which is exactly when you
 should look.
 
 ## What the patches do

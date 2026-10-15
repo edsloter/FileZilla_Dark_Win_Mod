@@ -114,7 +114,7 @@ if ($LASTEXITCODE -ne 0) { throw "pacman -Sy failed with exit code $LASTEXITCODE
 # -u on the compiler group only.
 #
 # --needed means "install if missing", which deliberately never upgrades. That is
-# right for the pinned bootstrap tools (PowerShell, Git, wxWidgets), where a frozen
+# right for the pinned bootstrap tools (Git, wxWidgets), where a frozen
 # version is the point, but wrong for the compiler: MSYS2 ships gcc in place and
 # patches it, so a machine that bootstrapped months ago keeps building with whatever
 # it installed then, and a stale compiler is a real hazard rather than a
@@ -207,51 +207,6 @@ Write-Host "  - libfilezilla $LibfzVersion"
 Write-Host "  - libfzssh-client $FzSshVersion"
 Write-Host "  - FileZilla $FzVersion"
 
-# ---------------------------------------------------------------- stale pins
-#
-# The bootstrap pins exact versions so a build cannot silently change under the
-# user. The cost is that a pin rots: nothing in a normal run notices that
-# PowerShell, Git or wxWidgets has shipped a newer release, so the kit quietly
-# keeps installing last month's version. This is advisory only - it never fails a
-# build, because being a version behind is not an error.
-Write-Host "`nPinned versions (checking GitHub for newer releases):"
-$pinChecks = @(
-    # PowerShell tags are plain v7.6.7.
-    @{ Name = 'PowerShell'; Pinned = $PwshVersion
-       Url  = 'https://api.github.com/repos/PowerShell/PowerShell/releases?per_page=15'
-       Pattern = '^v(\d+\.\d+\.\d+)$' }
-    # git-for-windows tags carry a build suffix, v2.56.0.windows.2, and live in
-    # git-for-windows/git rather than git/git-for-windows. versions.ps1 pins the
-    # bare 2.56.0 that appears in the download URL, so only the leading three
-    # components are compared - a .windows.N bump is a packaging fix and does not
-    # change the tool the build uses.
-    @{ Name = 'Git'; Pinned = $GitVersion
-       Url  = 'https://api.github.com/repos/git-for-windows/git/releases?per_page=15'
-       Pattern = '^v(\d+\.\d+\.\d+)\.' }
-)
-foreach ($c in $pinChecks) {
-    try {
-        $releases = Invoke-RestMethod -Uri $c.Url -Headers @{ 'User-Agent' = 'fzdark-pin-check' } -TimeoutSec 20
-        # Extract the version onto the object first. Reading $Matches inside a
-        # Sort-Object scriptblock does not work: $Matches is set by -match and
-        # leaks between iterations, so every row ends up comparing the same value.
-        $candidates = $releases |
-            Where-Object { -not $_.prerelease -and $_.tag_name -match $c.Pattern } |
-            ForEach-Object { [pscustomobject]@{ Ver = $Matches[1]; Tag = $_.tag_name } }
-        # [version] comparison, not string: 7.10.0 must sort above 7.9.0.
-        $latest = $candidates | Sort-Object { [version]$_.Ver } -Descending | Select-Object -First 1
-        if (-not $latest) { "{0,-12} pinned {1,-9} (could not determine latest)" -f $c.Name, $c.Pinned; continue }
-        if ([version]$latest.Ver -gt [version]$c.Pinned) {
-            "{0,-12} pinned {1,-9} LATEST IS {2} ({3}) - update versions.ps1" -f $c.Name, $c.Pinned, $latest.Ver, $latest.Tag
-        }
-        else {
-            "{0,-12} pinned {1,-9} up to date" -f $c.Name, $c.Pinned
-        }
-    }
-    catch {
-        "{0,-12} pinned {1,-9} (check failed: {2})" -f $c.Name, $c.Pinned, $_.Exception.Message.Split([char]10)[0]
-    }
-}
 
 if ($missing.Count -gt 0) {
     Write-Warning "missing tool(s): $($missing -join ', ')"

@@ -135,15 +135,22 @@ $SqliteSha512  = 'fb0cc705e5eb4c690c9eb3b5a98652895b87745bcc2c379f044a315b6b79dd
 $SqliteSha512Provenance = 'recorded'
 
 # ------------------------------------------------------- bootstrap toolchain ---
-# Versions are frozen rather than "latest" so the bootstrap cannot silently change
-# under the user. Digests are SHA-256, taken from the exact bytes verified here.
-
-$PwshVersion = '7.6.7'
-$PwshFile    = "PowerShell-$($PwshVersion)-win-x64.msi"
-$PwshUrl     = "https://github.com/PowerShell/PowerShell/releases/download/v$PwshVersion/$PwshFile"
-$PwshSize    = 117514240
-$PwshSha256  = 'ec575cef9ec56fcd905de0d5eeac9cb7f81a0a65abb87bb5cd0e87fdfe2b8cc0'
-
+# PowerShell is not here any more: the scripts run on Windows PowerShell 5.1, which
+# every supported Windows already has, so there is nothing to fetch and nothing to
+# pin. That is the reason it can be absent rather than merely unpinned.
+#
+# Git is pinned, and the reason is narrower than it might look. It is NOT pinned
+# because a newer Git might break the patch series - that would be speculation.
+# The build leans on four commands, all stable for close to twenty years: `git am
+# -3` for the 3-way merge that lets a hunk survive upstream moving its context,
+# `git format-patch` to export, `git diff` to inspect, and rev-parse and friends
+# for plumbing. The only output parsed back is a 40-character hash.
+#
+# It is pinned because bootstrap downloads a Git installer and runs it unprompted
+# with administrator rights. The pin records which bytes that was: a supply-chain
+# guarantee about software this kit executes as admin, not a compatibility claim.
+# The same reasoning applies to wxWidgets below, where the version is additionally
+# mandatory rather than merely audited.
 $GitVersion = '2.56.0'
 $GitFile    = "Git-$($GitVersion)-64-bit.exe"
 $GitUrl     = "https://github.com/git-for-windows/git/releases/download/v$($GitVersion).windows.1/$GitFile"
@@ -242,3 +249,26 @@ $TarballDir = Join-Path (Split-Path -Parent $PSCommandPath) 'tarballs'
 # orchestrator drops it.
 $OverlayName   = "FileZilla-$($FzVersion)-dark-overlay.7z"
 $NsisSetupName = "FileZilla-$($FzVersion)-dark-overlay-setup.exe"
+
+# --------------------------------------------------------------------- TLS ---
+#
+# The scripts run under Windows PowerShell 5.1, which is what Windows ships, so
+# every download goes through .NET Framework's HttpWebRequest rather than the
+# .NET Core stack PowerShell 7 uses. On .NET Framework the default
+# ServicePointManager.SecurityProtocol depends on the OS and the registry, and on
+# an older or hardened machine it can still be Tls12 off - or Ssl3/Tls10, both of
+# which GitHub and SourceForge refuse outright. The failure looks nothing like a
+# TLS problem: "The underlying connection was closed" or "Could not create SSL/TLS
+# secure channel".
+#
+# Windows 11 with a current .NET reports SystemDefault, which already negotiates
+# fine - which is exactly why this bites on one machine and not another. The -bor
+# keeps whatever was already enabled and adds Tls12 beside it, so nothing that
+# worked before is taken away.
+#
+# Done here because every script dot-sources this file, so the download paths in
+# bootstrap, fetch-deps and get-filezilla-source cannot drift apart on it.
+if (-not ([Net.ServicePointManager]::SecurityProtocol -band [Net.SecurityProtocolType]::Tls12)) {
+    [Net.ServicePointManager]::SecurityProtocol =
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+}

@@ -121,7 +121,7 @@ New-Item -ItemType Directory -Force -Path $Work | Out-Null
 # ---------------------------------------------------------------------- build
 
 Step 'A: build a user-elevation installer and removal tool'
-& pwsh.exe -NoProfile -File $builder -Elevation user -OutName 'setup-test-user.exe' -OutputDir $Work 2>&1 |
+& (Get-Process -Id $PID).Path -NoProfile -File $builder -Elevation user -OutName 'setup-test-user.exe' -OutputDir $Work 2>&1 |
     ForEach-Object { if ("$_".Trim()) { "  $_" } }
 $setup = Join-Path $Work 'setup-test-user.exe'
 if (-not (Test-Path $setup)) { throw 'no test installer was produced' }
