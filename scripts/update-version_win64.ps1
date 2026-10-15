@@ -176,8 +176,10 @@ foreach ($p in $patchFiles) {
         Write-Host ''
         # The remaining patches cannot be applied on top of a broken one, so stop here
         # rather than reporting a misleading partial result.
-        & $git -C $WorkTree am --abort 2>$null
-        break
+    # Nothing may be mid-application here, so a non-zero exit is expected and
+    # ignored rather than aborting the script under Windows PowerShell 5.1.
+    $null = Invoke-Native -File $git -ArgumentList @('-C', $WorkTree, 'am', '--abort') -IgnoreExitCode
+    break
     }
 }
 

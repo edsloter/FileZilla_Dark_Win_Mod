@@ -414,7 +414,7 @@ $ToolRegenerated = @(
 function Get-RealChanges {
     param([string]$TreePath)
     $changed = @()
-    foreach ($line in @(& $git -C $TreePath status --porcelain 2>$null)) {
+    foreach ($line in @(Invoke-Native -File $git -ArgumentList @('-C', $TreePath, 'status', '--porcelain') -IgnoreExitCode)) {
         if ($line.Length -lt 4) { continue }
         $path = $line.Substring(3).Trim().Trim('"')
         # Handle git's rename form "old -> new"; the new path is what matters.
@@ -437,9 +437,12 @@ if (Test-Path -LiteralPath $Work) {
         Remove-Item -LiteralPath $Work -Recurse -Force
     }
     else {
-        $head = [string](& $git -C $Work rev-parse --verify -q HEAD 2>$null)
+        $head = [string](Invoke-Native -File $git -ArgumentList @('-C', $Work, 'rev-parse', '--verify', '-q', 'HEAD') -IgnoreExitCode)
         $realChanges = @(Get-RealChanges -TreePath $Work)
-        $midAm = @(& $git -C $Work am --show-current-patch=diff 2>$null).Count
+        # git am --show-current-patch writes to stderr and exits non-zero when no patch
+    # is mid-application, which is the normal case here. Invoke-Native so that
+    # ordinary "is a patch in progress" answer does not abort the script under 5.1.
+    $midAm = @(Invoke-Native -File $git -ArgumentList @('-C', $Work, 'am', '--show-current-patch=diff') -IgnoreExitCode).Count
 
         if (-not $head) {
             Warn 'work tree exists but has no commits; rebuilding it'

@@ -151,10 +151,16 @@ if ($LASTEXITCODE -ne 0) {
 # A partial upgrade - new gcc driver, old gcc-libs - is what produces
 # "command failed to execute correctly" and a batch of confusing build failures
 # later. Verify the group actually moved together rather than assuming pacman did.
+#
+# Invoke-Native rather than a bare `& $pacman -Q`: under Windows PowerShell 5.1 a
+# native command writing to stderr aborts the caller when ErrorActionPreference is
+# Stop, even with 2>$null, so a package that is merely not installed - which is
+# exactly the case being handled here - took the whole script down. See the helper
+# in versions.ps1.
 $installed = @{}
 foreach ($p in $upgrade) {
-    $q = & $pacman -Q $p 2>$null
-    if ($q) { $installed[$p] = ($q -split '\s+')[-1] }
+    $q = @(Invoke-Native -File $pacman -ArgumentList @('-Q', $p) -IgnoreExitCode) -join ' '
+    if ($q) { $installed[$p] = ($q.Trim() -split '\s+')[-1] }
 }
 $gccVersion = $installed['mingw-w64-ucrt-x86_64-gcc']
 $libsVersion = $installed['mingw-w64-ucrt-x86_64-gcc-libs']

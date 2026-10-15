@@ -134,7 +134,10 @@ function Probe-Git {
 
     foreach ($c in ($candidates | Select-Object -Unique)) {
         try {
-            $v = (& $c --version 2>$null | Out-String).Trim()
+            # Invoke-Native rather than a bare call: a tool that is present but
+            # broken commonly reports the problem on stderr, which under 5.1 would
+            # abort the whole probe loop instead of being treated as "not working".
+            $v = (@(Invoke-Native -File $c -ArgumentList @('--version') -IgnoreExitCode) -join ' ').Trim()
             if ($v) { return @{ Path = $c; Version = $v } }
         }
         catch { }

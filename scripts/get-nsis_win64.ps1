@@ -48,12 +48,16 @@ function Test-Makensis {
     # Version is compared against the pin so a stale or foreign makensis is never used to
     # build the artefact.
     #
-    # The exit code is deliberately not checked. Under Set-StrictMode, $LASTEXITCODE is not
-    # even set when a native command's output is piped into Select-Object, so reading it here
-    # throws "The variable '$LASTEXITCODE' cannot be retrieved". The version string is enough:
+    # Invoke-Native rather than a bare call, for two separate 5.1 reasons. Reading
+    # $LASTEXITCODE after a native command piped into Select-Object throws "the
+    # variable cannot be retrieved" under Set-StrictMode, which is why the exit code
+    # is not consulted here at all. And a makensis that is present but unusable writes
+    # to stderr, which under Windows PowerShell 5.1 with ErrorActionPreference Stop
+    # aborts the caller instead of yielding an empty result - so a broken install would
+    # look like a crash rather than "not working". The version string is the answer:
     # makensis -VERSION prints it on success and nothing on failure.
     if (-not (Test-Path -LiteralPath $NsisExe)) { return $null }
-    $v = (& $NsisExe -VERSION 2>$null | Select-Object -First 1)
+    $v = @(Invoke-Native -File $NsisExe -ArgumentList @('-VERSION') -IgnoreExitCode)[0]
     if (-not $v) { return $null }
     $v = "$v".Trim()
     if ($v -notlike "v$($NsisVersion)*") { return $null }

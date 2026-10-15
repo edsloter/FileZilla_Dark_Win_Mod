@@ -272,3 +272,78 @@ if (-not ([Net.ServicePointManager]::SecurityProtocol -band [Net.SecurityProtoco
     [Net.ServicePointManager]::SecurityProtocol =
         [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 }
+
+# ------------------------------------------------------- native command output ---
+#
+# Windows PowerShell 5.1 turns a native command's stderr into a terminating error
+# when ErrorActionPreference is Stop - the 2>$null redirect does NOT prevent it,
+# because PowerShell wraps the native stderr in an ErrorRecord first. PowerShell 7
+# does not do this, so the difference only shows up on the edition the kit targets,
+# and it looks like a script bug rather than an engine difference: the reported
+# failure is RemoteException with the tool's own error text as its message.
+#
+# That matters here because several scripts deliberately probe with commands that
+# are allowed to fail - "is this patch applied", "is this package installed", "does
+# this flag exist". Each of those prints to stderr and exits non-zero when the
+# answer is no, which under 5.1 aborts the caller instead of yielding an empty
+# result.
+#
+# Invoke-Native captures stdout, discards stderr, and returns the exit code
+# instead of throwing, so a probe can ask its question without being able to take
+# the script down. Callers that want to fail on error check $LASTEXITCODE or the
+# returned code themselves.
+function Invoke-Native {
+    <#
+        Run a native command, returning its standard output as an array of LINES.
+        Standard error is discarded and a non-zero exit does NOT throw.
+
+        Lines, not one joined string, because callers parse the output: git status
+        --porcelain is one record per line and the caller does Substring on each. A
+        joined blob would silently collapse every record into one, and an empty
+        result would come back as an array of one empty string rather than an empty
+        array, breaking .Count and every foreach over it.
+
+        .PARAMETER File
+            Executable to run.
+
+        .PARAMETER ArgumentList
+            Arguments, passed as separate items.
+
+        .PARAMETER IgnoreExitCode
+            Present so the intent is explicit at call sites that probe. A probe
+            expects failure to be possible; everywhere else the caller should
+            test the result.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$File,
+
+        [string[]]$ArgumentList = @(),
+
+        [switch]$IgnoreExitCode
+    )
+
+    $stdout = @()
+    $previous = $ErrorActionPreference
+    try {
+        # Scoped: this is the whole point. Without it, a native command writing to
+        # stderr aborts the caller under 5.1.
+        $ErrorActionPreference = 'Continue'
+        $stdout = @(& $File @ArgumentList 2>$null)
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+
+    # PowerShell hands back $null for a command with no output; normalise that to
+    # an empty array so callers can rely on .Count and enumeration.
+    if ($null -eq $stdout) { $stdout = @() }
+
+    $code = $LASTEXITCODE
+    if (-not $IgnoreExitCode -and $code -ne 0) {
+        throw "$File exited with code $code"
+    }
+
+    return $stdout
+}
