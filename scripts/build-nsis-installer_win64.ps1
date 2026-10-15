@@ -244,7 +244,7 @@ if ($copied -ne $relPaths.Count -or $probed -ne $relPaths.Count -or
 
 Write-Step "compiling the uninstaller with $(& $NsisExe -VERSION)"
 $uninstLog = Join-Path $buildDir 'makensis-uninstaller.log'
-$uninstOut = & $NsisExe /V3 $uninstNsi 2>&1
+$uninstOut = Invoke-Native -File $NsisExe -ArgumentList @('/V3', $uninstNsi) -IgnoreExitCode
 $uninstCode = $LASTEXITCODE
 $uninstOut | Set-Content -LiteralPath $uninstLog -Encoding UTF8
 $uninstErrors = @($uninstOut | Select-String -Pattern '\berror\b\s*:' -CaseSensitive:$false)
@@ -258,7 +258,7 @@ Write-Step ("uninstaller built ({0:N0} KB)" -f ((Get-Item $uninstExe).Length / 1
 
 Write-Step "compiling the installer with $(& $NsisExe -VERSION)"
 $log = Join-Path $buildDir 'makensis.log'
-$out = & $NsisExe /V3 $genNsi 2>&1
+$out = Invoke-Native -File $NsisExe -ArgumentList @('/V3', $genNsi) -IgnoreExitCode
 $code = $LASTEXITCODE
 $out | Set-Content -LiteralPath $log -Encoding UTF8
 

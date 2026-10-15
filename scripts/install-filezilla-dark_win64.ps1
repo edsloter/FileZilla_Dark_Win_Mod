@@ -356,9 +356,14 @@ else {
     # quote spaced array elements, so "bash -lc <multi-word command>" is delivered
     # as one word per token and bash runs only the first. Same reason step 8 invokes
     # bash through a normal call, whose native-argument quoting is correct.
-    & $bash -lc $lfzCmd 2>&1 | Tee-Object -FilePath $lfzLog | Out-Null
-    $lfzExit = $LASTEXITCODE
-    Get-Content -LiteralPath $lfzLog | ForEach-Object { Write-Host "   $_" }
+        # Invoke-NativeLogged, not a bare `& $bash ... 2>&1 | Tee-Object`. Under
+        # Windows PowerShell 5.1 the stderr of a native command raises a
+        # terminating error under ErrorActionPreference Stop even when merged into
+        # the success stream and even when the command exits 0, so one compiler
+        # warning would abort the build. See Invoke-NativeLogged in versions.ps1.
+        $null = Invoke-NativeLogged -File $bash -ArgumentList @('-lc', $lfzCmd) -LogPath $lfzLog
+        $lfzExit = $LASTEXITCODE
+        Get-Content -LiteralPath $lfzLog | ForEach-Object { Write-Host "   $_" }
     if ($lfzExit -ne 0) { throw "build-libfilezilla_win64.sh failed with exit code $lfzExit. See $lfzLog" }
 
     $lfzDll = Get-ChildItem (Join-Path $Root 'deps\bin') -File -Filter '*filezilla-59.dll' -EA SilentlyContinue | Select-Object -First 1
@@ -379,9 +384,9 @@ Info 'locating and verifying the upstream source tree'
 $srcArgs = @{ Destination = $Src; Root = $Root }
 if ($Tarball) { $srcArgs['Tarball'] = $Tarball }
 if ($Keep) { $srcArgs['Keep'] = $true }
-$srcOut = & (Join-Path $Scripts 'get-filezilla-source_win64.ps1') @srcArgs 6>&1 2>&1 |
-    Tee-Object -FilePath (Join-Path $Logs '07-source.log')
-$srcOut | ForEach-Object { Write-Host "   $_" }
+    $srcOut = Invoke-NativeLogged -File (Join-Path $Scripts 'get-filezilla-source_win64.ps1') `
+        -ArgumentList $srcArgs -LogPath (Join-Path $Logs '07-source.log') -PassThru
+    $srcOut | ForEach-Object { Write-Host "   $_" }
 
 $marker = $srcOut | ForEach-Object { "$_" } | Where-Object { $_ -match 'SOURCE_ROOT=' } | Select-Object -Last 1
 if (-not $marker) { throw 'source acquisition did not report a verified source root; see 07-source.log' }
@@ -492,10 +497,10 @@ if ($needWorkTree) {
     if ($LASTEXITCODE -ne 0) { throw 'baseline commit failed' }
     Good 'baseline committed'
 
-    $amLog = Join-Path $Logs '08-patch.log'
-    & $git -C $Work am @($patchFiles.FullName) 2>&1 | Tee-Object -FilePath $amLog
-    if ($LASTEXITCODE -ne 0) {
-        & $git -C $Work am --abort
+        $amLog = Join-Path $Logs '08-patch.log'
+        $null = Invoke-NativeLogged -File $git -ArgumentList (@('-C', $Work, 'am') + $patchFiles.FullName) -LogPath $amLog
+        if ($LASTEXITCODE -ne 0) {
+            Invoke-Native -File $git -ArgumentList @('-C', $Work, 'am', '--abort') -IgnoreExitCode | Out-Null
         throw "git am failed; the series was rolled back. See $amLog"
     }
     Good 'all patches applied'
@@ -519,9 +524,10 @@ if ($dirty.Count -gt 0) {
 
 Banner 'light-appearance icon variants'
 $iconTheme = Join-Path $Work 'src\interface\resources\default'
-$iconLog = Join-Path $Logs '09-icons.log'
-& (Join-Path $Scripts 'make-dark-icons_win64.ps1') -ThemeDir $iconTheme 2>&1 | Tee-Object -FilePath $iconLog
-if ($LASTEXITCODE -ne 0) { throw "icon generation failed; see $iconLog" }
+    $iconLog = Join-Path $Logs '09-icons.log'
+    $null = Invoke-NativeLogged -File (Join-Path $Scripts 'make-dark-icons_win64.ps1') `
+        -ArgumentList @('-ThemeDir', $iconTheme) -LogPath $iconLog
+    if ($LASTEXITCODE -ne 0) { throw "icon generation failed; see $iconLog" }
 
 # The patch series already carries the icons as binary blobs, and the audited tree
 # hash above pins them. So this is a verification step, not a generation step:
@@ -542,9 +548,9 @@ foreach ($n in $generated) {
     $before[$n] = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash
 }
 
-& (Join-Path $Scripts 'make-dark-icons_win64.ps1') -ThemeDir $iconTheme -Force 2>&1 |
-    Tee-Object -FilePath $iconLog | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "icon generation failed; see $iconLog" }
+    $null = Invoke-NativeLogged -File (Join-Path $Scripts 'make-dark-icons_win64.ps1') `
+        -ArgumentList @('-ThemeDir', $iconTheme, '-Force') -LogPath $iconLog
+    if ($LASTEXITCODE -ne 0) { throw "icon generation failed; see $iconLog" }
 
 $drifted = @($generated | Where-Object {
     (Get-FileHash -LiteralPath (Join-Path $iconSizeDir "${_}_light.png") -Algorithm SHA256).Hash -ne $before[$_]
@@ -601,8 +607,8 @@ $bashCommand = "export PATH=/ucrt64/bin:/usr/bin:`$PATH" +
     "; export FZ_FZSSH_SRC='$(& $bash -lc "cygpath -u '$Root\src\fzssh-$FzSshVersion'").Trim()'" +
     "; bash '$buildScriptMsys'"
 
-& $bash -lc $bashCommand 2>&1 | Tee-Object -FilePath $buildLog | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "FileZilla build failed; see $buildLog" }
+    $null = Invoke-NativeLogged -File $bash -ArgumentList @('-lc', $bashCommand) -LogPath $buildLog
+    if ($LASTEXITCODE -ne 0) { throw "FileZilla build failed; see $buildLog" }
 
 $exe = Join-Path $Install 'bin\filezilla.exe'
 if (-not (Test-Path -LiteralPath $exe)) { throw "build reported success but $exe is missing" }

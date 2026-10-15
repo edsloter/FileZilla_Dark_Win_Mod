@@ -347,3 +347,76 @@ function Invoke-Native {
 
     return $stdout
 }
+
+function Invoke-NativeLogged {
+    <#
+        Run a native command, merging its stderr into stdout so a build's warnings
+        end up in the log, and return every output line. A non-zero exit does NOT
+        throw - the caller decides, by testing $LASTEXITCODE or the result.
+
+        This exists because of a Windows PowerShell 5.1 behaviour that has no
+        equivalent in PowerShell 7. With ErrorActionPreference Stop, a native
+        command's stderr becomes a terminating error even when merged into the
+        success stream with 2>&1 and even when the command exits 0. Measured on
+        both editions with a command that prints a warning to stderr and exits 0:
+
+            pwsh 7:  captured, no throw
+            5.1:     throws RemoteException, message = the warning text
+
+        So a compiler emitting one ordinary warning aborted the build it was part
+        of, and the failure named a warning rather than anything real. The
+        preference is scoped to the pipeline and restored afterwards, which
+        contains the change to the one call: everything outside still behaves as
+        if the script had been written for 7.
+
+        .PARAMETER File
+            Executable to run.
+
+        .PARAMETER ArgumentList
+            Arguments, passed as separate items.
+
+        .PARAMETER LogPath
+            When given, all output is also written there, so the log keeps the
+            interleaved stdout and stderr exactly as the tool produced it.
+
+        .PARAMETER PassThru
+            Return the output lines. Without it nothing is returned, which suits a
+            long build whose output is only wanted in the log and on screen.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$File,
+
+        [string[]]$ArgumentList = @(),
+
+        [string]$LogPath,
+
+        [switch]$PassThru,
+
+        # Accepted for symmetry with Invoke-Native so a call site can be switched
+        # between the two without thinking. This function never throws on exit code.
+        [switch]$IgnoreExitCode
+    )
+
+    $output = @()
+    $previous = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        if ($LogPath) {
+            # Tee-Object keeps one stream: what the tool wrote, in the order it
+            # wrote it, on screen and in the log.
+            $output = @(& $File @ArgumentList 2>&1 | Tee-Object -FilePath $LogPath)
+        }
+        else {
+            $output = @(& $File @ArgumentList 2>&1)
+        }
+    }
+    finally {
+        $ErrorActionPreference = $previous
+    }
+
+    if ($null -eq $output) { $output = @() }
+    if ($PassThru) { return $output }
+    return
+}

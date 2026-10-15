@@ -155,7 +155,7 @@ foreach ($p in $patchFiles) {
     # -3 does a 3-way merge from the blob hashes in the index lines, so a hunk whose
     # surrounding lines moved still applies. Without it, any context drift is fatal.
     # (There is no --no-edit option on git am; it only exists on git rebase.)
-    $null = & $git -C $WorkTree am --keep-non-patch -3 $p.FullName 2>&1
+    $null = Invoke-Native -File $git -ArgumentList @('-C', $WorkTree, 'am', '--keep-non-patch', '-3', $p.FullName) -IgnoreExitCode
     if ($LASTEXITCODE -eq 0) {
         $applied++
         Step "applied $($p.Name)"

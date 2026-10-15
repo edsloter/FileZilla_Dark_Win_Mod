@@ -159,8 +159,14 @@ if ((Test-Path -LiteralPath $setupSrc) -and
 
 Push-Location $buildDir
 try {
-    & (Join-Path $ucrt 'bin\mingw32-make.exe') @args 2>&1 |
-        Tee-Object -FilePath (Join-Path $logDir 'wx-build.log')
+    # Invoke-NativeLogged, not a bare `& make @args 2>&1 | Tee-Object`. Under
+    # Windows PowerShell 5.1 a native command's stderr raises a terminating error
+    # under ErrorActionPreference Stop even when merged into the success stream and
+    # even when the command exits 0 - so a single compiler warning aborted the
+    # build with the warning text as the error message. See versions.ps1.
+    $null = Invoke-NativeLogged -File (Join-Path $ucrt 'bin\mingw32-make.exe') `
+        -ArgumentList $args `
+        -LogPath (Join-Path $logDir 'wx-build.log')
     $rc = $LASTEXITCODE
 }
 finally { Pop-Location }

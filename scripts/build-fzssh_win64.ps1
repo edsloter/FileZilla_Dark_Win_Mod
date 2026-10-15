@@ -79,11 +79,15 @@ Write-Host "PKG_CONFIG_PATH = $env:PKG_CONFIG_PATH`n"
 Write-Host '=== dependency modules ==='
 $pkgconf = Join-Path $ucrt 'bin\pkgconf.exe'
 $failed = $false
-foreach ($m in @('libfilezilla', 'nettle', 'hogweed', 'gmp', 'libargon2')) {
-    $v = (& $pkgconf --modversion $m 2>&1) -join ''
-    if ($LASTEXITCODE -eq 0) { Write-Host ("  {0,-14} {1}" -f $m, $v) }
-    else { Write-Host ("  {0,-14} FAILED: {1}" -f $m, $v); $failed = $true }
-}
+    # Invoke-Native, not a bare `& $pkgconf ... 2>&1`: pkgconf reports a missing
+    # module on stderr and exits 1, which is the case this loop exists to report,
+    # and under Windows PowerShell 5.1 that stderr would raise a terminating error
+    # instead. See Invoke-Native in versions.ps1.
+    foreach ($m in @('libfilezilla', 'nettle', 'hogweed', 'gmp', 'libargon2')) {
+        $v = @(Invoke-Native -File $pkgconf -ArgumentList @('--modversion', $m) -IgnoreExitCode) -join ' '
+        if ($LASTEXITCODE -eq 0) { Write-Host ("  {0,-14} {1}" -f $m, $v) }
+        else { Write-Host ("  {0,-14} FAILED: {1}" -f $m, $v); $failed = $true }
+    }
 if ($failed) { throw 'one or more Meson dependencies could not be resolved' }
 
 if ($Wipe -and (Test-Path $build)) {
@@ -93,20 +97,26 @@ if ($Wipe -and (Test-Path $build)) {
 
 if (Test-Path (Join-Path $build 'build.ninja')) {
     Write-Host "`n=== meson setup (reconfigure) ==="
-    & (Join-Path $ucrt 'bin\meson.exe') setup $build $src --reconfigure "--prefix=$prefix" 2>&1 | Select-Object -Last 20
+    $null = Invoke-NativeLogged -File (Join-Path $ucrt 'bin\meson.exe') `
+        -ArgumentList @('setup', $build, $src, '--reconfigure', "--prefix=$prefix") `
+        -PassThru | Select-Object -Last 20
 }
 else {
     Write-Host "`n=== meson setup ==="
-    & (Join-Path $ucrt 'bin\meson.exe') setup $build $src "--prefix=$prefix" '--libdir=lib' 2>&1 | Select-Object -Last 25
+    $null = Invoke-NativeLogged -File (Join-Path $ucrt 'bin\meson.exe') `
+        -ArgumentList @('setup', $build, $src, "--prefix=$prefix", '--libdir=lib') `
+        -PassThru | Select-Object -Last 25
 }
 if ($LASTEXITCODE -ne 0) { throw "meson setup failed (exit $LASTEXITCODE)" }
 
 Write-Host "`n=== ninja ==="
-& (Join-Path $ucrt 'bin\ninja.exe') -C $build -j $Jobs 2>&1 | Select-Object -Last 25
+$null = Invoke-NativeLogged -File (Join-Path $ucrt 'bin\ninja.exe') `
+    -ArgumentList @('-C', $build, '-j', $Jobs) -PassThru | Select-Object -Last 25
 if ($LASTEXITCODE -ne 0) { throw "ninja build failed (exit $LASTEXITCODE)" }
 
 Write-Host "`n=== ninja install ==="
-& (Join-Path $ucrt 'bin\ninja.exe') -C $build install 2>&1 | Select-Object -Last 15
+$null = Invoke-NativeLogged -File (Join-Path $ucrt 'bin\ninja.exe') `
+    -ArgumentList @('-C', $build, 'install') -PassThru | Select-Object -Last 15
 if ($LASTEXITCODE -ne 0) { throw "ninja install failed (exit $LASTEXITCODE)" }
 
 Write-Host "`n=== installed ==="
