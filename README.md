@@ -34,7 +34,7 @@ wx 3.2 fails at load time.
 
 ## Layout
 
-    manifests/    SHA-256 of all 1320 files in the upstream source tree
+    manifests/    SHA-256 of every file in the upstream source tree
     patches/      the 9-patch series, plus .gitignore.baseline
     licenses/     licence texts for the components built here
     screenshots/  the screenshot at the top of this file
@@ -222,6 +222,48 @@ is not the whole answer for this particular build.
 Licence texts covering the components built here are in `licenses\` and ship inside the
 `.7z`. If you redistribute a binary built from this kit, offer the corresponding source as
 described above.
+
+## When FileZilla releases a new version
+
+Two pins are specific to one release and cannot be carried across by editing a number: the
+per-file manifest under `manifests\`, and `$FzPatchedTree` in `versions.ps1`. The tree hash
+changes whenever upstream moves *and* whenever any patch is edited, so it has to be
+recomputed rather than guessed.
+
+```powershell
+# against an extracted upstream tree for the new version:
+.\scripts\update-version_win64.ps1 -Version 3.72.0
+```
+
+That hashes the new tree into `manifests\filezilla-3.72.0.sources.sha256`, applies the whole
+series to a scratch work tree with `git am -3`, and prints the new values. It does **not**
+edit `versions.ps1`, because that file is the audited record of what was verified; it should
+only change once someone has read the diff.
+
+Read the output in this order:
+
+1. **Any patch reported as `FAILED`.** The script stops at the first one, so later patches
+   are untested. Resolve it in the work tree it leaves behind:
+   ```
+   git -C C:\fzdark\work\port-3.72.0 am --show-current-patch=diff
+   ```
+   Most often upstream edited the code the patch touches, or fixed the problem itself and
+   the patch should be dropped. Then `git am --continue`, or `--abort` to start over.
+
+2. **`git diff <baseline>..HEAD --stat`.** Patches can apply cleanly and still be wrong —
+   a 3-way merge resolves context drift without anyone noticing the logic no longer fits.
+
+3. **Paste the printed values** into `versions.ps1`: `$FzVersion`, `$FzManifestFile` and
+   `$FzPatchedTree`, plus `$FzSourceFile`, `$FzSourceSize` and `$FzSourceSha512`, which come
+   from the download page and cannot be derived.
+
+4. **Rebuild.** Step 6 compares the patched tree against `$FzPatchedTree` and refuses to
+   continue on a mismatch, so a stale pin fails loudly rather than shipping silently.
+
+The `-3` flag is what makes most bumps routine: every patch carries git blob hashes, so a hunk
+whose surrounding lines merely *moved* merges instead of failing. The version that breaks this
+way is one where upstream rewrote the lines a patch depends on, which is exactly when a human
+should look.
 
 ## What the patches do
 
