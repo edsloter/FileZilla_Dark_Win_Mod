@@ -26,8 +26,8 @@
     Parallel make jobs. Defaults to the number of logical processors.
 
 .PARAMETER Keep
-    Reuse whatever is already in build\msw instead of distcleaning it first, and
-    keep the log afterwards. Without it the tree is distcleaned before building -
+    Reuse whatever is already in build\msw instead of cleaning it first, and
+    keep the log afterwards. Without it the tree is cleaned before building -
     never wiped, because it holds pristine sources - and the log is removed on
     success. Pass this when a build fails and you want the log, or to make an
     incremental rebuild much faster.
@@ -77,25 +77,43 @@ New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 
 if (-not $Keep) {
     # NEVER wipe build\msw wholesale: it holds pristine sources such as
-    # makefile.gcc, config.gcc and the vcxproj files. Use the makefile's own
-    # distclean target, which removes objects, generated headers, lib\ and bin\
-    # while leaving those files in place.
+    # makefile.gcc, config.gcc and the vcxproj files.
+    #
+    # wxWidgets' makefile.gcc has NO distclean target - asking make for it answers
+    # "No rule to make target 'distclean'", which is a hard failure. It does have
+    # clean, and clean knows the object and library paths better than this script
+    # does, so clean is used and its non-zero exit is ignored: it returns 2 on a
+    # tree with nothing built, which is not an error here.
+    #
+    # clean does not cover everything, because it only deletes files that exist.
+    # gcc_mswudll\ holds the compiled objects, and lib\gcc_dll holds the generated
+    # setup.h and mswu\wx\ headers, so both are removed by name afterwards.
     Write-Host 'Cleaning previous build outputs (keeping makefile.gcc and friends)...'
     Push-Location $buildDir
     try {
-        & (Join-Path $ucrt 'bin\mingw32-make.exe') '-f' 'makefile.gcc' 'distclean' `
-            'SHELL=C:/Windows/System32/cmd.exe' 2>&1 | Out-Null
+        $null = Invoke-Native -File (Join-Path $ucrt 'bin\mingw32-make.exe') `
+            -ArgumentList @('-f', 'makefile.gcc', 'clean', 'SHELL=C:/Windows/System32/cmd.exe') `
+            -IgnoreExitCode
     }
     finally { Pop-Location }
 
-    # Belt and braces for anything distclean leaves behind.
-    foreach ($d in @('obj', 'wx', 'lib', 'bin')) {
+    # Object and generated-header directories. gcc_mswudll is the one makefile.gcc
+    # builds into; the others cover other build flavours so a tree reused after
+    # switching settings is not left with a mix.
+    foreach ($d in @('gcc_mswudll', 'obj', 'wx', 'lib', 'bin')) {
         $p = Join-Path $buildDir $d
         if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    # lib\gcc_dll and lib\gcc_lib sit beside build\, not under it, and hold the
+    # generated setup.h that must not survive a change of compiler or settings.
+    foreach ($d in @('lib\gcc_dll', 'lib\gcc_lib')) {
+        $p = Join-Path $wxRoot $d
+        if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     if (-not (Test-Path (Join-Path $buildDir 'makefile.gcc'))) {
-            throw "makefile.gcc vanished during clean - aborting. Restore it from wxWidgets-$WxVersion.tar.bz2 (build/msw/)."
+        throw "makefile.gcc vanished during clean - aborting. Restore it from wxWidgets-$WxVersion.tar.bz2 (build/msw/)."
     }
 }
 
