@@ -132,6 +132,35 @@ Same checks and backup, driven from PowerShell 7. Undo with the same script plus
   directory page lets you override it. An empty `/D=` is indistinguishable from passing
   none, so a script with an unset variable silently gets auto-detection.
 
+## What is pinned, and what tracks the latest
+
+Two different rules, because the two kinds of tool fail differently.
+
+**Pinned exactly** — PowerShell, Git, wxWidgets, NSIS, and every source tarball. Each has a
+version, URL, size and digest in `versions.ps1`, and the bootstrap installs that exact bytes.
+A build therefore cannot change under you because Microsoft published a new PowerShell the
+morning you ran it.
+
+The cost is that a pin rots unnoticed. `install-toolchain_win64.ps1` queries GitHub after
+installing and prints `up to date` or `LATEST IS x.y.z - update versions.ps1` for PowerShell
+and Git. **It reports; it never upgrades.** Updating a pin is a deliberate edit to the
+audited record, not something a build does behind your back.
+
+**Always the repo's current version** — the MSYS2 UCRT64 toolchain: gcc, binutils, meson,
+ninja, 7-Zip and the rest. `pacman -S --needed` would only install these if *missing*, so a
+machine that bootstrapped months ago would keep building with the compiler it installed then.
+MSYS2 patches its compiler in place, and a stale one is a hazard rather than a
+reproducibility guarantee, so the bootstrap refreshes the sync databases (`pacman -Sy`) and
+runs `pacman -S --needed -u` over `gcc`, `gcc-libs`, `binutils` and the gcc headers as one
+group.
+
+That group matters: a newer `g++` beside an older `cc1plus` or `libgcc` is the mismatch that
+produces `error: command failed to execute correctly` from pacman and much more confusing
+failures later. The script checks the installed versions agree and warns if they do not.
+
+So: **the compiler is whatever MSYS2 currently ships; PowerShell and Git are whatever
+`versions.ps1` says, with a nudge when that falls behind.**
+
 ## Elevation
 
 **Nothing here re-launches itself with `RunAs`**, except the `.exe` installer, which asks

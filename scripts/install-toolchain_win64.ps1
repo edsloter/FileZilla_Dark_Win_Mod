@@ -104,8 +104,57 @@ $packages = @(
 )
 
 Write-Host "Installing $($packages.Count) UCRT64 packages via pacman...`n"
+
+# Refresh the sync databases first. Without this, pacman compares against whatever
+# the databases held when MSYS2 was unpacked, so a repo that has since moved to a
+# newer gcc looks unchanged and nothing is upgraded.
+& $pacman -Sy --noconfirm
+if ($LASTEXITCODE -ne 0) { throw "pacman -Sy failed with exit code $LASTEXITCODE" }
+
+# -u on the compiler group only.
+#
+# --needed means "install if missing", which deliberately never upgrades. That is
+# right for the pinned bootstrap tools (PowerShell, Git, wxWidgets), where a frozen
+# version is the point, but wrong for the compiler: MSYS2 ships gcc in place and
+# patches it, so a machine that bootstrapped months ago keeps building with whatever
+# it installed then, and a stale compiler is a real hazard rather than a
+# reproducibility guarantee. -u moves gcc to the repo's current version.
+#
+# gcc, gcc-libs and binutils have to move together. A newer g++ paired with an older
+# cc1plus or an older libgcc is precisely the mismatch that makes pacman report
+# "error: command failed to execute correctly", and it surfaces later as a much more
+# confusing build failure. Upgrading them as one group avoids it.
+$upgrade = @(
+    'mingw-w64-ucrt-x86_64-gcc'
+    'mingw-w64-ucrt-x86_64-gcc-libs'
+    'mingw-w64-ucrt-x86_64-binutils'
+    'mingw-w64-ucrt-x86_64-headers-gcc'
+)
+
 & $pacman -S --needed --noconfirm @packages
 if ($LASTEXITCODE -ne 0) { throw "pacman failed with exit code $LASTEXITCODE" }
+
+Write-Host "`nBringing the compiler up to the repo's current version..."
+& $pacman -S --needed --noconfirm -u @upgrade
+if ($LASTEXITCODE -ne 0) {
+    # Not fatal: an older compiler still builds, it just is not the newest one.
+    # Failing the whole bootstrap here would be worse than reporting it.
+    Write-Warning "the compiler upgrade step failed (exit $LASTEXITCODE); continuing with the installed version"
+}
+
+# A partial upgrade - new gcc driver, old gcc-libs - is what produces
+# "command failed to execute correctly" and a batch of confusing build failures
+# later. Verify the group actually moved together rather than assuming pacman did.
+$installed = @{}
+foreach ($p in $upgrade) {
+    $q = & $pacman -Q $p 2>$null
+    if ($q) { $installed[$p] = ($q -split '\s+')[-1] }
+}
+$gccVersion = $installed['mingw-w64-ucrt-x86_64-gcc']
+$libsVersion = $installed['mingw-w64-ucrt-x86_64-gcc-libs']
+if ($gccVersion -and $libsVersion -and ($gccVersion -ne $libsVersion)) {
+    Write-Warning "gcc $($gccVersion) and gcc-libs $($libsVersion) disagree; a partial upgrade can break the build. Re-run this script, or 'pacman -Syu'."
+}
 
 Write-Host "`nDone. Toolchain versions:"
 $ucrt = 'C:\msys64\ucrt64'
