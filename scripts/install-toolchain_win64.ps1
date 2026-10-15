@@ -124,11 +124,17 @@ if ($LASTEXITCODE -ne 0) { throw "pacman -Sy failed with exit code $LASTEXITCODE
 # cc1plus or an older libgcc is precisely the mismatch that makes pacman report
 # "error: command failed to execute correctly", and it surfaces later as a much more
 # confusing build failure. Upgrading them as one group avoids it.
+#
+# Only these three are named. gcc carries version-locked dependencies
+# (libgcc=16.2.0-6, libstdc++=16.2.0-6, binutils, crt, headers, ...) and pacman
+# resolves and upgrades those automatically, so listing them here would be
+# redundant. Note the headers package is mingw-w64-ucrt-x86_64-headers - there is
+# no "headers-gcc", and naming one aborts the whole pacman call with
+# "target not found", upgrading nothing at all.
 $upgrade = @(
     'mingw-w64-ucrt-x86_64-gcc'
     'mingw-w64-ucrt-x86_64-gcc-libs'
     'mingw-w64-ucrt-x86_64-binutils'
-    'mingw-w64-ucrt-x86_64-headers-gcc'
 )
 
 & $pacman -S --needed --noconfirm @packages
