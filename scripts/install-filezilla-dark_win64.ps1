@@ -378,15 +378,22 @@ else {
 
 Banner "FileZilla $Version source"
 Info 'locating and verifying the upstream source tree'
-# 6>&1 merges the information stream: get-filezilla-source_win64.ps1 reports progress with
-# Write-Host, which in PS7 goes to the information stream and would otherwise be
-# absent from $srcOut entirely, taking the SOURCE_ROOT marker with it.
+# -Splat, not -ArgumentList. get-filezilla-source_win64.ps1 is a PowerShell script
+# taking named parameters, and splatting is how a hashtable reaches them by name.
+# Passed as an -ArgumentList instead, the hashtable is stringified - the script runs
+# with "System.Collections.Hashtable" as its Root, and the build then looks for its
+# tree under scripts\System.Collections.Hashtable\.
+#
+# Invoke-NativeLogged rather than a bare call so the child's progress - reported with
+# Write-Host, which is the information stream - is captured into $srcOut along with
+# everything else. The SOURCE_ROOT marker below is a Write-Host line, so losing that
+# stream would lose the marker.
 $srcArgs = @{ Destination = $Src; Root = $Root }
 if ($Tarball) { $srcArgs['Tarball'] = $Tarball }
 if ($Keep) { $srcArgs['Keep'] = $true }
-    $srcOut = Invoke-NativeLogged -File (Join-Path $Scripts 'get-filezilla-source_win64.ps1') `
-        -ArgumentList $srcArgs -LogPath (Join-Path $Logs '07-source.log') -PassThru
-    $srcOut | ForEach-Object { Write-Host "   $_" }
+$srcOut = Invoke-NativeLogged -File (Join-Path $Scripts 'get-filezilla-source_win64.ps1') `
+    -Splat $srcArgs -LogPath (Join-Path $Logs '07-source.log') -PassThru
+$srcOut | ForEach-Object { Write-Host "   $_" }
 
 $marker = $srcOut | ForEach-Object { "$_" } | Where-Object { $_ -match 'SOURCE_ROOT=' } | Select-Object -Last 1
 if (-not $marker) { throw 'source acquisition did not report a verified source root; see 07-source.log' }

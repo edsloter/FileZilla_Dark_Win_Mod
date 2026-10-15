@@ -390,6 +390,14 @@ function Invoke-NativeLogged {
 
         [string[]]$ArgumentList = @(),
 
+        # A hashtable of named parameters, passed with splatting:
+        #   Invoke-NativeLogged -File $x -Splat @{ Root = $r; Keep = $true }
+        # Required for calling another PowerShell script by parameter name. Without
+        # it the only way through is a positional ArgumentList, and a hashtable put
+        # there is stringified to "System.Collections.Hashtable" rather than
+        # expanded - the script then runs with that as one of its arguments.
+        [hashtable]$Splat = @{},
+
         [string]$LogPath,
 
         [switch]$PassThru,
@@ -403,13 +411,29 @@ function Invoke-NativeLogged {
     $previous = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
+        if ($Splat.Count -gt 0 -and $ArgumentList.Count -gt 0) {
+            throw 'pass either -Splat or -ArgumentList, not both'
+        }
+        # *>&1 redirects every stream into the success stream, which covers both
+        # kinds of call this helper makes:
+        #   - a native tool, whose stderr is stream 2
+        #   - another PowerShell script, whose Write-Host progress is stream 6
+        #     (Write-Host has written to the information stream since PS 5.0)
+        # Dropping the 6>&1 would lose every Write-Host line from a child script,
+        # which is how the orchestrator recognises a step's result.
+        #
+        # Splat a PowerShell script's named parameters; use -ArgumentList otherwise.
+        $run =
+            if ($Splat.Count -gt 0) { & $File @Splat *>&1 }
+            else { & $File @ArgumentList *>&1 }
+
         if ($LogPath) {
             # Tee-Object keeps one stream: what the tool wrote, in the order it
             # wrote it, on screen and in the log.
-            $output = @(& $File @ArgumentList 2>&1 | Tee-Object -FilePath $LogPath)
+            $run | Tee-Object -FilePath $LogPath | ForEach-Object { $output += $_ }
         }
         else {
-            $output = @(& $File @ArgumentList 2>&1)
+            $output = @($run)
         }
     }
     finally {
