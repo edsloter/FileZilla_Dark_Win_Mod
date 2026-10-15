@@ -76,8 +76,16 @@ function Good { param([string]$m) Write-Host "  [ok]   $m" }
 function Warn { param([string]$m) Write-Host "  [warn] $m" }
 function Bad  { param([string]$m) Write-Host "  [!!]   $m" }
 
-$git = (Get-Command git -ErrorAction SilentlyContinue).Source
-if (-not $git) { throw 'git not found on PATH' }
+# Assigned first, never as (Get-Command ...).Source: under Set-StrictMode,
+# reading .Source on the $null that Get-Command returns when git is not on PATH
+# throws PropertyNotFoundStrict, so the check below would never run.
+$gitCmd = Get-Command git -ErrorAction SilentlyContinue
+$git = if ($gitCmd) { $gitCmd.Source } else { $null }
+if (-not $git) {
+    $candidate = 'C:\Program Files\Git\cmd\git.exe'
+    if (Test-Path -LiteralPath $candidate) { $git = $candidate }
+}
+if (-not $git) { throw 'git not found on PATH or at its standard install location' }
 
 # ------------------------------------------------------------------ preflight
 

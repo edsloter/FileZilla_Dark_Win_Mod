@@ -408,9 +408,23 @@ $patchFiles = @(Get-ChildItem $Patches -Filter '*.patch' -File | Sort-Object Nam
 if ($patchFiles.Count -eq 0) { throw "no patches found in $Patches" }
 Info "$($patchFiles.Count) patches: $(($patchFiles.Name) -join ', ')"
 
-$git = (Get-Command git.exe -EA SilentlyContinue).Source
+# Resolve git in two steps, never as (Get-Command ...).Source.
+#
+# Under Set-StrictMode, reading a property on $null throws PropertyNotFoundStrict:
+# "The property 'Source' cannot be found on this object". Get-Command returns
+# $null when git.exe is not on PATH - which is the normal state in a terminal
+# opened before the bootstrap installed Git, since bootstrap's PATH fix applies
+# to its own process and its children, not to shells opened afterwards. The
+# chained form therefore threw before the fallback on the next line could run,
+# so the fallback was unreachable and a machine with Git installed but not on
+# PATH failed at step 6 instead of finding it at its standard location.
+#
+# Assigning first and testing the result is what makes the fallback reachable.
+$gitCmd = Get-Command git.exe -ErrorAction SilentlyContinue
+$git = if ($gitCmd) { $gitCmd.Source } else { $null }
 if (-not $git) { $git = 'C:\Program Files\Git\cmd\git.exe' }
 if (-not (Test-Path $git)) { throw 'git.exe not found; the patch series is applied with git am' }
+Info "git      : $git"
 
 # Files autoreconf/gettext regenerate every build. They are tracked in upstream, so
 # a completed build always leaves them showing as modified, with only timestamps and
