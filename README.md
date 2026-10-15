@@ -35,7 +35,7 @@ wx 3.2 fails at load time.
 ## Layout
 
     manifests/    SHA-256 of all 1320 files in the upstream source tree
-    patches/      the 8-patch series, plus .gitignore.baseline
+    patches/      the 9-patch series, plus .gitignore.baseline
     licenses/     licence texts for the components built here
     screenshots/  the screenshot at the top of this file
     scripts/      everything that fetches, patches, builds, packages and tests
@@ -196,7 +196,7 @@ NSIS, used only to build the `.exe`, is fetched the same way: pinned to 3.13 by 
 tried across SourceForge and two third-party mirrors, and unpacked with 7-Zip rather than
 installed.
 
-The patch series is checked against a known tree hash, `f86ca17e...`, so a silently
+The patch series is checked against a known tree hash, `dc392be8...`, so a silently
 mis-applied patch cannot turn into a shipped binary.
 
 ## Licensing
@@ -233,3 +233,4 @@ described above.
 | 0005 | fix a `std::wstring` narrowing bug that wx 3.3 exposes |
 | 0007 | follow the system light/dark theme |
 | 0008 | add the 13 light-appearance icon variants |
+| 0009 | give the already-connected dialog's options distinct IDs, so dark mode can draw them |

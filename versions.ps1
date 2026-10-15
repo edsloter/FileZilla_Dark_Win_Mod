@@ -63,9 +63,9 @@ $FzSourceMirrors = @(
 # source-manifest_win64.ps1; never regenerate it just to make a build pass.
 $FzManifestFile = "filezilla-$($FzVersion).sources.sha256"
 
-# The tree the 8-patch series must produce. The build refuses to continue if the
+# The tree the 9-patch series must produce. The build refuses to continue if the
 # patched tree does not hash to this.
-$FzPatchedTree = 'f86ca17e735fbf24d8762a94334c1e7218718549'
+$FzPatchedTree = 'dc392be8ae789225c6ae7647ad9e3b0ed8fa5cbe'
 
 # ---------------------------------------------------------------- libfilezilla ---
 # Not shipped inside the client tarball: configure.ac requires it already installed.
