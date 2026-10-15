@@ -105,12 +105,25 @@ fi
 rm -f "$cfg_log"
 
 echo
-echo "=== make -j$JOBS ==="
-"$MAKE" -j"$JOBS"
+echo "=== make -j$JOBS (library only) ==="
+# Build lib/ directly rather than recursing from the top. The top-level SUBDIRS
+# also contains demos/, which declares ten noinst_PROGRAMS (timer_fizzbuzz,
+# process, nonblocking_process, events, list, https, raw_https, aio,
+# impersonation, xml_pp). Those are sample programs, they are never installed,
+# and linking all ten in parallel reliably wedges the build on this machine:
+# every libtool --mode=link shell ends up waiting on the same output dir and
+# nothing progresses. The library itself is built by lib/Makefile alone, so
+# skip demos/ and tests/ entirely. Both are noinst/check-only, so this changes
+# what is installed not at all - only what gets compiled first.
+#
+# lib/ is the only subdir whose output FileZilla links against; lib/Makefile
+# install is run below rather than the top-level install, because the top-level
+# target would walk back into demos/ and tests/.
+"$MAKE" -C lib -j"$JOBS"
 
 echo
-echo "=== "$MAKE" install ==="
-"$MAKE" install
+echo "=== "$MAKE" -C lib install ==="
+"$MAKE" -C lib install
 
 echo
 echo "=== installed ==="
