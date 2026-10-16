@@ -138,16 +138,13 @@ Same checks and backup, driven from PowerShell. Undo with the same script plus
 - **If removal cannot restore, it says so instead of claiming success.** With no backup
   left there is no way to tell which files are ours, so nothing is deleted: the tool lists
   the overlay files still on disk and tells you to reinstall FileZilla from the official
-  package. An earlier version reported "nothing to uninstall" in exactly this state, which
-  was false — the dark mode was still applied and the user had no way back.
-- **Either tool can now remove either install.** An overlay installed by the `.exe` is
-  removed by the tool that `.exe` placed, and one installed by PowerShell is removed by
+  package.
+- **Either tool can remove either install.** An overlay installed by the `.exe` is removed
+  by the tool that `.exe` placed, and one installed by PowerShell is removed by
   `install-dark-overlay_win64.ps1 -Uninstall`. Each also recognises the other's backup
   layout, so a tree that was installed with one and then the other is still removable.
-  Earlier releases each understood only their own backup and would refuse or silently
-  restore the wrong files; both now restore from the **oldest** backup, which holds the
-  genuine originals. Neither tool is a substitute for the other at install time - still
-  install with one, or the other.
+  Both restore from the **oldest** backup, which holds the genuine originals. Neither tool
+  is a substitute for the other at install time - still install with one, or the other.
 - **Which FileZilla gets picked** follows: a target this kit installed to before, then
   Program Files, Program Files (x86), `%LOCALAPPDATA%`, `%LOCALAPPDATA%\Programs`. The
   directory page lets you override it. An empty `/D=` is indistinguishable from passing
