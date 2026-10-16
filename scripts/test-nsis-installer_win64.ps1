@@ -121,9 +121,14 @@ New-Item -ItemType Directory -Force -Path $Work | Out-Null
 # ---------------------------------------------------------------------- build
 
 Step 'A: build a user-elevation installer and removal tool'
+# Invoke-Native always returns the output lines, so there is no -PassThru to pass;
+# only Invoke-NativeLogged has one. The target here is the PowerShell host executable
+# with its own -File switch, not a script invoked directly, so an argv-style
+# -ArgumentList is correct - and the 5.1 stderr trap that would otherwise abort on a
+# warning is why this goes through the helper at all.
 Invoke-Native -File (Get-Process -Id $PID).Path `
     -ArgumentList @('-NoProfile', '-File', $builder, '-Elevation', 'user', '-OutName', 'setup-test-user.exe', '-OutputDir', $Work) `
-    -IgnoreExitCode -PassThru |
+    -IgnoreExitCode |
     ForEach-Object { if ("$_".Trim()) { "  $_" } }
 $setup = Join-Path $Work 'setup-test-user.exe'
 if (-not (Test-Path $setup)) { throw 'no test installer was produced' }
