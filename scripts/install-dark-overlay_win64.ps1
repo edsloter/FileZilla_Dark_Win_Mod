@@ -27,11 +27,23 @@
     FileZilla installation directory. Autodetected when omitted.
 
 .PARAMETER Uninstall
-    Restore the newest backup this script made and remove the overlay files.
+    Remove the overlay and restore the installation. Restores from the OLDEST backup
+    this script made - that one holds the genuine originals - then removes every backup
+    it finds, so a directory installed more than once still comes back clean.
 
 .PARAMETER Force
     Close a running FileZilla without asking, and continue on version mismatch
     warnings.
+
+.PARAMETER ForceOverAlreadyInstalled
+    Install even though an overlay is already present in the target directory.
+
+    The normal behaviour is to refuse, and the reason is worth stating: a second
+    install backs up the already-overlaid files as if they were the originals. This
+    is now recoverable rather than dangerous, because -Uninstall restores from the
+    OLDEST backup, which still holds the genuine stock files, and clears them all
+    afterwards. The flag exists for repairing a tree left in a confusing state. It
+    adds a second backup rather than replacing the first, and prints what it found.
 
 .PARAMETER NoVersionCheck
     Skip the FileZilla version check. Only for testing against a mock install.
@@ -44,12 +56,16 @@
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\install-dark-overlay_win64.ps1 -Uninstall
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File .\install-dark-overlay_win64.ps1 -ForceOverAlreadyInstalled
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$InstallDir,
     [switch]$Uninstall,
     [switch]$Force,
+    [switch]$ForceOverAlreadyInstalled,
     [switch]$NoVersionCheck
 )
 
@@ -391,10 +407,19 @@ function Test-OverlayApplied {
 }
 
 function Assert-OverlayNotInstalled {
-    param([string]$Dir, $Entries)
+    param([string]$Dir, $Entries, [switch]$Force)
 
     $state = Test-OverlayApplied -Dir $Dir -Entries $Entries
     if (-not $state.Installed) { return }
+
+    if ($Force) {
+        Write-Warn2 "installing over an existing overlay ($($state.Why))."
+        Write-Warn2 "The existing backup is kept, and -Uninstall restores from the OLDEST backup,"
+        Write-Warn2 "which holds the genuine stock files, then removes every backup. So this is"
+        Write-Warn2 "recoverable - but run -Uninstall rather than deleting the backup folder, or the"
+        Write-Warn2 "originals go with it."
+        return
+    }
 
     $msg = @(
         "The dark overlay is already installed in:"
@@ -409,6 +434,9 @@ function Assert-OverlayNotInstalled {
         "Nothing has been changed."
         ""
         "What to do: $($state.Fix)."
+        "If you are deliberately repairing this directory, -ForceOverAlreadyInstalled"
+        "installs anyway. It stays recoverable, because -Uninstall restores from the"
+        "oldest backup rather than the newest."
     ) -join "`n"
     throw $msg
 }
@@ -419,6 +447,19 @@ function Invoke-Install {
     $backupRoot = Join-Path $Dir $BackupDirName
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd-HHmmss')
     $backup = Join-Path $backupRoot $stamp
+
+    # The timestamp is only accurate to a second, and two installs inside the same second
+    # - which is exactly what -ForceOverAlreadyInstalled followed by a retry looks like -
+    # would otherwise land in the same directory. New-Item -Force treats an existing
+    # directory as success, so the run would silently reuse it and overwrite the STOCK
+    # originals saved there with the overlay's own files. That is precisely the corruption
+    # the already-installed guard exists to prevent, reintroduced through the override.
+    # The marker file marks a name as taken, so a half-written directory does not.
+    $suffix = 0
+    while (Test-Path -LiteralPath (Join-Path $backup 'backup-manifest.txt')) {
+        $suffix++
+        $backup = Join-Path $backupRoot ("{0}-{1}" -f $stamp, $suffix)
+    }
     New-Item -ItemType Directory -Force -Path $backup | Out-Null
 
     $log = [System.Collections.Generic.List[string]]::new()
@@ -627,7 +668,7 @@ Assert-TargetVersion -Dir $dir
 # After the manifest and version are confirmed - so the refusal cannot fire on a
 # directory that is not even FileZilla - but before FileZilla is closed and a single
 # byte is written.
-Assert-OverlayNotInstalled -Dir $dir -Entries $entries
+Assert-OverlayNotInstalled -Dir $dir -Entries $entries -Force:$ForceOverAlreadyInstalled
 
 Stop-FileZilla -Dir $dir
 

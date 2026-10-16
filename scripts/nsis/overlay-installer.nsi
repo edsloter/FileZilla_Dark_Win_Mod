@@ -106,6 +106,7 @@ Var Stamp
 Var Replaced
 Var Added
 Var Fh
+Var ForceOver
 
 ; ====================================================================== refusals
 
@@ -185,14 +186,55 @@ Var Fh
 ; Call after the FileZilla version check, so a folder that is not FileZilla is never
 ; judged on overlay state, and before anything is written.
 !macro ASSERT_NOT_ALREADY_INSTALLED
-  ReadRegStr $TmpB HKLM "${ARP_KEY}" "InstallLocation"
-  ${If} $TmpB != ""
-    !insertmacro REFUSE "The dark overlay is already registered in Add/Remove Programs as$\n$\n  FileZilla @@FZVERSION@@ light/dark overlay$\n$\npointing at:$\n  $TmpB$\n$\nInstalling a second time would back up the already-overlaid$\nfiles as if they were the originals, which breaks removal: the$\nuninstaller would restore the overlay over itself and delete the$\nonly Add/Remove entry, leaving dark mode you cannot get rid of.$\n$\nNothing has been changed.$\n$\nRemove the overlay first, from Add/Remove Programs, then run$\nthis installer again."
-  ${EndIf}
+  ; Deliberate repair. Safe to allow because removal restores from the OLDEST backup,
+  ; which still holds the stock files, and clears every backup afterwards. Announce it
+  ; rather than proceeding quietly. Every refusal below is skipped behind this one test
+  ; rather than an early Goto, because jumping out of a ${If} leaves LogicLib's generated
+  ; labels unresolved and makensis aborts.
+  ${If} $ForceOver == 1
+    DetailPrint "Installing over an existing overlay because /F was given."
+    DetailPrint "Its backup is kept. Removal restores from the OLDEST backup, which holds"
+    DetailPrint "the genuine originals, then removes every backup. Do not delete the backup"
+    DetailPrint "folder by hand, or the originals go with it."
+  ${Else}
+    ReadRegStr $TmpB HKLM "${ARP_KEY}" "InstallLocation"
+    ${If} $TmpB != ""
+      !insertmacro REFUSE "The dark overlay is already registered in Add/Remove Programs as$\n$\n  FileZilla @@FZVERSION@@ light/dark overlay$\n$\npointing at:$\n  $TmpB$\n$\nInstalling a second time would back up the already-overlaid$\nfiles as if they were the originals, which breaks removal: the$\nuninstaller would restore the overlay over itself and delete the$\nonly Add/Remove entry, leaving dark mode you cannot get rid of.$\n$\nNothing has been changed.$\n$\nRemove the overlay first, from Add/Remove Programs, then run$\nthis installer again. To install anyway on purpose, add /F."
+    ${EndIf}
 
-  ${If} ${FileExists} "$INSTDIR\${BACKUP_DIRNAME}\*.*"
-    !insertmacro REFUSE "A backup folder from a previous overlay install is still$\npresent in:$\n  $INSTDIR\${BACKUP_DIRNAME}$\n$\nFileZilla does not create that folder, so an overlay has been$\ninstalled here before. It may or may not still be active.$\n$\nInstalling over it would back up the already-overlaid files as$\nif they were the originals, which breaks removal.$\n$\nNothing has been changed.$\n$\nRun the removal tool (Add/Remove Programs, or$\n%LOCALAPPDATA%\fzdark\@@UNINST_NAME@@ /D=$INSTDIR) to uninstall it$\ncleanly first. If that reports the overlay is not installed but the$\nfolder is still here, reinstall FileZilla from the official package$\nto get a clean copy."
+    ${If} ${FileExists} "$INSTDIR\${BACKUP_DIRNAME}\*.*"
+      !insertmacro REFUSE "A backup folder from a previous overlay install is still$\npresent in:$\n  $INSTDIR\${BACKUP_DIRNAME}$\n$\nFileZilla does not create that folder, so an overlay has been$\ninstalled here before. It may or may not still be active.$\n$\nInstalling over it would back up the already-overlaid files as$\nif they were the originals, which breaks removal.$\n$\nNothing has been changed.$\n$\nRun the removal tool (Add/Remove Programs, or$\n%LOCALAPPDATA%\fzdark\@@UNINST_NAME@@ /D=$INSTDIR) to uninstall it$\ncleanly first. If that reports the overlay is not installed but the$\nfolder is still here, reinstall FileZilla from the official package$\nto get a clean copy. To install anyway on purpose, add /F."
+    ${EndIf}
   ${EndIf}
+!macroend
+
+; Read the /F command-line switch into $ForceOver.
+;
+; Ten explicit comparisons rather than StrFunc's GetOptions: this NSIS ships a reduced
+; StrFunc, and a missing function here would be a compile error that only shows up on a
+; machine with makensis. StrCmp is core, so this cannot.
+!macro READ_FORCE_SWITCH
+  StrCpy $ForceOver 0
+  StrCmp $0 "/F" 0 +2
+    StrCpy $ForceOver 1
+  StrCmp $1 "/F" 0 +2
+    StrCpy $ForceOver 1
+  StrCmp $2 "/F" 0 +2
+    StrCpy $ForceOver 1
+  StrCmp $3 "/F" 0 +2
+    StrCpy $ForceOver 1
+  StrCmp $4 "/F" 0 +2
+    StrCpy $ForceOver 1
+  StrCmp $5 "/F" 0 +2
+    StrCpy $ForceOver 1
+  StrCmp $6 "/F" 0 +2
+    StrCpy $ForceOver 1
+  StrCmp $7 "/F" 0 +2
+    StrCpy $ForceOver 1
+  StrCmp $8 "/F" 0 +2
+    StrCpy $ForceOver 1
+  StrCmp $9 "/F" 0 +2
+    StrCpy $ForceOver 1
 !macroend
 
 ; Consider $Cand. Records the first real @@FZVERSION@@ install in $INSTDIR and, separately,
@@ -232,6 +274,10 @@ Var Fh
 !macroend
 
 Function .onInit
+  ; Read before anything else: the guard in the install section reads it, and .onInit is
+  ; where $0-$9 are reliably the caller's arguments rather than anything NSIS has set up.
+  !insertmacro READ_FORCE_SWITCH
+
   ; $INSTDIR arrives empty unless the caller passed /D=. When it is already set that is the
   ; caller's explicit choice - or a test harness pointing at a scratch copy - so detection
   ; must not overwrite it. The install section re-checks whatever ends up here either way.

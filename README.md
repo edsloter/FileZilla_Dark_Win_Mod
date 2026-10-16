@@ -131,6 +131,11 @@ Same checks and backup, driven from PowerShell. Undo with the same script plus
     refuses when the backup folder was deleted by hand and the two markers both look clean.
   - The `.exe` checks the backup folder and the Add/Remove key. It cannot hash without a
     plugin this NSIS does not ship.
+  - To install over an existing overlay on purpose, pass `-ForceOverAlreadyInstalled`, or
+    `/F` to the `.exe`. It stays recoverable: the existing backup is kept, `-Uninstall`
+    restores from the **oldest** backup — the one holding the genuine stock files — and
+    then removes every backup. Do not delete the backup folder by hand afterwards, or the
+    originals go with it.
 - **The removal tool is kept, deliberately.** It lives in `%LOCALAPPDATA%\fzdark`
   because a running executable cannot delete itself, so anything left inside the FileZilla
   folder would stop the installation being restored byte for byte. It is about 54 KB and
@@ -187,14 +192,21 @@ go back to the network, or use `-Force`. Names and sizes are pinned in `versions
     powershell -File .\scripts\test-nsis-installer_win64.ps1
 
 Run the first of those before every commit. It needs no admin, no build and no network,
-and finishes in about a second. It parses and loads every script under the PowerShell
-actually running it, exercises the native-command helpers against commands that misbehave
-on purpose, and scans statically for the traps a parse cannot see: cmdlets that exist only
-in 7, a stray `pwsh.exe`, an argument list aimed at a script instead of a native tool, a
-property read chained onto a `Get-Command` that can return null, and native stderr merged
-without the preference being scoped around it. Because 5.1 turns a native command's stderr
-into a terminating error where 7 does not, a script can parse perfectly and still abort on
-the first compiler warning - that is exactly the class of bug this catches.
+and finishes in about a second. It confirms the repo is compliant with **Windows
+PowerShell 5.1**, the shell every supported Windows already has and the only one this kit
+requires:
+
+- parses and loads every script under the PowerShell actually running it
+- exercises the native-command helpers against commands that warn, fail, and take both a
+  hashtable splat and an argv list
+- checks TLS 1.2 is enabled, which .NET Framework does not turn on by default
+- scans for cmdlets or parameters that 5.1 does not have, a stray `pwsh.exe`, an argument
+  list aimed at a script rather than a native tool, a property read chained onto a
+  `Get-Command` that can return null, and native stderr merged without the error
+  preference being scoped around it
+
+A script can parse perfectly and still fail at run time under 5.1, which is what this
+catches.
 
 The second runs four phases against real copies of an actual FileZilla 3.71.1
 installation: payload extraction, script install, uninstall-and-restore, and a round trip
