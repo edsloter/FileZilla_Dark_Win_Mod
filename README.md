@@ -163,19 +163,33 @@ go back to the network, or use `-Force`. Names and sizes are pinned in `versions
 
 ## Test it
 
+    powershell -File .\scripts\test-powershell-compat_win64.ps1
     powershell -File .\scripts\test-overlay_win64.ps1
     powershell -File .\scripts\test-nsis-installer_win64.ps1
 
-The first runs four phases against real copies of an actual FileZilla 3.71.1
+Run the first of those before every commit. It needs no admin, no build and no network,
+and finishes in about a second. It parses and loads every script under the PowerShell
+actually running it, exercises the native-command helpers against commands that misbehave
+on purpose, and scans statically for the traps a parse cannot see: cmdlets that exist only
+in 7, a stray `pwsh.exe`, an argument list aimed at a script instead of a native tool, a
+property read chained onto a `Get-Command` that can return null, and native stderr merged
+without the preference being scoped around it. Because 5.1 turns a native command's stderr
+into a terminating error where 7 does not, a script can parse perfectly and still abort on
+the first compiler warning - that is exactly the class of bug this catches.
+
+The second runs four phases against real copies of an actual FileZilla 3.71.1
 installation: payload extraction, script install, uninstall-and-restore, and a round trip
 of the released `.7z`. It asserts the install is restored byte for byte and that nothing
 outside the payload is disturbed, `fzstorj.exe` included.
 
-The second builds a user-elevation copy of both `.exe` artefacts and round-trips them
+The third builds a user-elevation copy of both `.exe` artefacts and round-trips them
 against a scratch copy: install, refuse to overwrite a wrong version, refuse cleanly
 while FileZilla is running, and removal restoring the whole tree byte for byte. Both need
 a stock FileZilla install to copy from; pass `-StockDir` if it is not in
 `C:\Program Files\FileZilla FTP Client`.
+
+Neither of the last two needs a built artefact, so they are cheap; but both need a stock
+install, so point them at a scratch copy rather than your live one.
 
 ## Provenance
 
