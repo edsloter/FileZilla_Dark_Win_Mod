@@ -77,8 +77,11 @@ Head '3. runtime behaviour that differs between 5.1 and 7'
 
 . (Join-Path $RepoRoot 'versions.ps1')
 
+function Doing { param([string]$m) Write-Host "  ...   $m" -ForegroundColor DarkGray }
+
 # TLS: under 5.1 downloads use .NET Framework, whose default protocol set can still
 # exclude Tls12, and GitHub and SourceForge refuse the older ones.
+Doing 'checking TLS 1.2'
 if ([Net.ServicePointManager]::SecurityProtocol -band [Net.SecurityProtocolType]::Tls12) {
     Pass 'TLS 1.2 is enabled after loading versions.ps1'
 }
@@ -88,10 +91,10 @@ else {
 
 # A native command that warns and succeeds. Under 5.1 with ErrorActionPreference Stop
 # this is fatal unless the helper scopes the preference; on 7 it never was.
+Doing 'a warning on stderr must not abort the build'
 $warner = Join-Path $env:TEMP 'fzdark-compat-warn.cmd'
 Set-Content -LiteralPath $warner -Value "@echo off`r`necho warning: deprecated something 1>&2`r`nexit /b 0`r`n"
 
-$before = $failures
 try {
     $out = @(Invoke-Native -File $warner -ArgumentList @() -IgnoreExitCode)
     Pass 'Invoke-Native survives a warning on stderr with exit 0'
@@ -108,6 +111,7 @@ catch { Fail "Invoke-NativeLogged threw on a warning: $($_.Exception.Message)" }
 Remove-Item -LiteralPath $warner -Force -ErrorAction SilentlyContinue
 
 # A command that fails: probes must tolerate it, real steps must still fail.
+Doing 'a real failure must still fail loudly'
 $failing = Join-Path $env:TEMP 'fzdark-compat-fail.cmd'
 Set-Content -LiteralPath $failing -Value "@echo off`r`necho error: no such package 1>&2`r`nexit /b 1`r`n"
 
@@ -123,10 +127,9 @@ try {
 }
 catch { Pass 'Invoke-Native without -IgnoreExitCode still fails loudly' }
 
-Remove-Item -LiteralPath $failing -Force -ErrorAction SilentlyContinue
-
 # Splatting: an array is argv, a hashtable binds by name. Getting this wrong against a
 # PowerShell script produces a message that names neither the call nor the parameter.
+Doing 'splat vs argv against a script'
 $probe = Join-Path $env:TEMP 'fzdark-compat-probe.ps1'
 Set-Content -LiteralPath $probe -Value "param([string]`$Name)`nWrite-Host `"got `$Name`"`n"
 
@@ -149,15 +152,23 @@ catch {
     }
 }
 
+# The other half of the guard: it must NOT fire for a native tool. Uses the same .cmd
+# file as the checks above rather than naming cmd.exe, so this check depends on no
+# particular executable beyond one already proven to run in this session. On a locked
+# down or App Guard VM, resolving cmd.exe through PATH with streams redirected can stall
+# where running a concrete file cannot, and a check that hangs is worse than no check.
+Doing 'the guard must not misfire on a native tool'
 try {
-    $null = Invoke-NativeLogged -File cmd.exe -ArgumentList @('-c', 'exit 0') -IgnoreExitCode
+    $null = Invoke-NativeLogged -File $failing -ArgumentList @('ignored') -IgnoreExitCode
     Pass 'guard does not fire for a native tool, where -ArgumentList is argv'
 }
 catch { Fail "guard misfired on a native tool: $($_.Exception.Message)" }
 
+Remove-Item -LiteralPath $failing -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
 
 # Get-HostPath is how a child step inherits the running host.
+Doing 'the child step inherits this host'
 $hostExe = $null
 try { $hostExe = (Get-Process -Id $PID -ErrorAction Stop).Path } catch { }
 if ($hostExe) { Pass "the running host resolves for child steps: $hostExe" }
