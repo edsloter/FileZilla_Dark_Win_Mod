@@ -545,10 +545,16 @@ if ($dirty.Count -gt 0) {
 
 Banner 'light-appearance icon variants'
 $iconTheme = Join-Path $Work 'src\interface\resources\default'
-    $iconLog = Join-Path $Logs '09-icons.log'
-    $null = Invoke-NativeLogged -File (Join-Path $Scripts 'make-dark-icons_win64.ps1') `
-        -ArgumentList @('-ThemeDir', $iconTheme) -LogPath $iconLog
-    if ($LASTEXITCODE -ne 0) { throw "icon generation failed; see $iconLog" }
+$iconLog = Join-Path $Logs '09-icons.log'
+# -Splat, not -ArgumentList. make-dark-icons_win64.ps1 is a PowerShell script, and an
+# array splat is not re-parsed as parameter syntax: '& script @('-ThemeDir', $path)'
+# passes '-ThemeDir' as a positional VALUE, and the script then fails with
+# "A positional parameter cannot be found that accepts argument <path>". Only a
+# hashtable splat binds by name. Native tools keep using -ArgumentList, which is
+# exactly argv for them. See Invoke-NativeLogged in versions.ps1.
+$null = Invoke-NativeLogged -File (Join-Path $Scripts 'make-dark-icons_win64.ps1') `
+    -Splat @{ ThemeDir = $iconTheme } -LogPath $iconLog
+if ($LASTEXITCODE -ne 0) { throw "icon generation failed; see $iconLog" }
 
 # The patch series already carries the icons as binary blobs, and the audited tree
 # hash above pins them. So this is a verification step, not a generation step:
@@ -569,9 +575,9 @@ foreach ($n in $generated) {
     $before[$n] = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash
 }
 
-    $null = Invoke-NativeLogged -File (Join-Path $Scripts 'make-dark-icons_win64.ps1') `
-        -ArgumentList @('-ThemeDir', $iconTheme, '-Force') -LogPath $iconLog
-    if ($LASTEXITCODE -ne 0) { throw "icon generation failed; see $iconLog" }
+$null = Invoke-NativeLogged -File (Join-Path $Scripts 'make-dark-icons_win64.ps1') `
+    -Splat @{ ThemeDir = $iconTheme; Force = $true } -LogPath $iconLog
+if ($LASTEXITCODE -ne 0) { throw "icon generation failed; see $iconLog" }
 
 $drifted = @($generated | Where-Object {
     (Get-FileHash -LiteralPath (Join-Path $iconSizeDir "${_}_light.png") -Algorithm SHA256).Hash -ne $before[$_]

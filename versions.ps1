@@ -414,6 +414,23 @@ function Invoke-NativeLogged {
         if ($Splat.Count -gt 0 -and $ArgumentList.Count -gt 0) {
             throw 'pass either -Splat or -ArgumentList, not both'
         }
+
+        # Catch the mistake that produces the most confusing failure in this file.
+        # For a NATIVE tool an array splat is exactly argv and -ThemeDir is correct.
+        # For a PowerShell script it is not: '& script @('-ThemeDir', $path)' does not
+        # re-parse the element as a parameter name, it passes the string '-ThemeDir'
+        # as a positional VALUE, and the script dies with "A positional parameter
+        # cannot be found that accepts argument <path>" - an error that names neither
+        # the call site nor the parameter. A hashtable splat binds by name instead.
+        if ($ArgumentList.Count -gt 0 -and $File -like '*.ps1') {
+            foreach ($a in $ArgumentList) {
+                if ($a -is [string] -and $a.StartsWith('-')) {
+                    throw ("'$File' is a PowerShell script, so -ArgumentList cannot carry " +
+                           "parameter names: '$a' would be passed as a positional value. " +
+                           "Use -Splat instead, e.g. -Splat @{ Name = `$value }")
+                }
+            }
+        }
         # *>&1 redirects every stream into the success stream, which covers both
         # kinds of call this helper makes:
         #   - a native tool, whose stderr is stream 2
