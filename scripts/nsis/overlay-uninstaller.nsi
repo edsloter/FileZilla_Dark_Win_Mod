@@ -46,6 +46,7 @@ RequestExecutionLevel @@ELEVATION@@
 !define FZ_VERSION "@@FZVERSION@@"
 !define BACKUP_DIRNAME "fzdark-backup"
 !define BACKUP_LOGNAME "installed.txt"
+!define PS1_LOGNAME "backup-manifest.txt"
 !define ARP_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\FileZillaDarkOverlay"
 
 !insertmacro MUI_PAGE_INSTFILES
@@ -53,7 +54,8 @@ RequestExecutionLevel @@ELEVATION@@
 
 Var TargetDir
 Var BackupRoot
-Var NewestBackup
+Var OldestBackup
+Var BackupCount
 Var Replaced
 Var Added
 Var TmpA
@@ -62,35 +64,82 @@ Var TmpB
 Section "Remove overlay"
   IntOp $Replaced 0 + 0
   IntOp $Added 0 + 0
+  IntOp $BackupCount 0 + 0
 
   ; The FileZilla directory is passed with /D, so the ARP entry keeps working even if the
   ; tool is run by hand.
   StrCpy $TargetDir "$INSTDIR"
   StrCpy $BackupRoot "$TargetDir\${BACKUP_DIRNAME}"
 
-  ; Newest backup, chosen the same way the installer chooses one: lexical order is
-  ; chronological order, and only a directory holding the marker file counts as a backup.
-  StrCpy $NewestBackup ""
+  ; Choose the OLDEST backup, and count them all.
+  ;
+  ; This used to take the newest, which is what broke a tree that had been installed
+  ; twice: the newest backup then held the overlay itself, so the restore copied the
+  ; overlay over itself and the genuine originals stayed buried in the older directory
+  ; that nothing pointed at any more. Oldest first is the only order that recovers such
+  ; a tree, and for a correctly installed one there is a single backup, so it changes
+  ; nothing there.
+  ;
+  ; FindFirst does not promise sorted order, so the minimum is selected explicitly rather
+  ; than by keeping the last match. LogicLib compares operands as strings when they are
+  ; not integers, which is what makes 'backup-0000' order correctly against a timestamped
+  ; directory from the PowerShell installer.
+  ;
+  ; Both markers are accepted. This kit writes backup-manifest.txt and the installer
+  ; writes installed.txt, so a user who tried one and then the other leaves both kinds,
+  ; and recognising only one silently ignored a real backup holding the only copy of
+  ; their originals.
+  StrCpy $OldestBackup ""
   FindFirst $TmpA $TmpB "$BackupRoot\*"
   ${DoWhile} $TmpB != ""
     ${If} ${FileExists} "$BackupRoot\$TmpB\${BACKUP_LOGNAME}"
-      StrCpy $NewestBackup "$BackupRoot\$TmpB"
+    ${OrIf} ${FileExists} "$BackupRoot\$TmpB\${PS1_LOGNAME}"
+      IntOp $BackupCount $BackupCount + 1
+      ${If} $OldestBackup == ""
+      ${OrIf} $TmpB < $OldestBackup
+        StrCpy $OldestBackup "$TmpB"
+      ${EndIf}
     ${EndIf}
     FindNext $TmpA $TmpB
   ${Loop}
-
-  DeleteRegKey HKLM "${ARP_KEY}"
-
-  ${If} $NewestBackup != ""
-@@RESTORE_BEGIN@@
-    DetailPrint "Restored $Replaced file(s), removed $Added overlay-only file(s) from $TargetDir."
-    RMDir /r "$NewestBackup"
-  ${Else}
-    DetailPrint "No overlay backup was found under $BackupRoot, so no file was restored."
-    DetailPrint "Check the overlay archive's manifest for the file list before deleting anything by hand."
+  ${If} $OldestBackup != ""
+    StrCpy $OldestBackup "$BackupRoot\$OldestBackup"
   ${EndIf}
 
+  ${If} $BackupCount > 1
+    DetailPrint "Found $BackupCount overlapping backups; restoring from the oldest."
+  ${EndIf}
+
+  ${If} $OldestBackup != ""
+@@RESTORE_BEGIN@@
+    DetailPrint "Restored $Replaced file(s), removed $Added overlay-only file(s) from $TargetDir."
+  ${Else}
+    DetailPrint "No overlay backup was found under $BackupRoot, so no file was restored."
+    DetailPrint "Overlay files may still be in place: without a backup there is no way to"
+    DetailPrint "tell which ones are ours, so nothing has been deleted."
+    DetailPrint "Reinstall FileZilla from the official package to get a clean copy."
+  ${EndIf}
+
+  ; Every backup goes, not just the one restored from. A leftover backup folder in a
+  ; FileZilla installation is residue the user should not have to know to delete, and
+  ; leaving one behind is what made a later install pick up a stale undo chain.
+  FindFirst $TmpA $TmpB "$BackupRoot\*"
+  ${DoWhile} $TmpB != ""
+    RMDir /r "$BackupRoot\$TmpB"
+    FindNext $TmpA $TmpB
+  ${Loop}
   RMDir "$BackupRoot"
+
+  ; The Add/Remove entry is removed ONLY when a restore actually ran. Deleting it
+  ; unconditionally is what turned a failed removal into an unrecoverable one: the user
+  ; lost the only entry point in Add/Remove while the overlay stayed installed, and the
+  ; leftover tool then reported there was nothing to remove.
+  ${If} $OldestBackup != ""
+    DeleteRegKey HKLM "${ARP_KEY}"
+  ${Else}
+    DetailPrint "Keeping the Add/Remove Programs entry, because nothing was restored."
+    DetailPrint "Fix the problem above and run this tool again."
+  ${EndIf}
 
   ; The icon directory pre-dates the overlay, so it is only removed when empty.
   RMDir "$TargetDir\resources\default\480x480"

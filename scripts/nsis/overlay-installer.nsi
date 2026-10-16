@@ -152,6 +152,46 @@ Var Fh
   ${EndIf}
 !macroend
 
+; Refuse to install over an overlay that is already there.
+;
+; This is the guard that was missing, and its absence produced a support problem no user
+; could escape. Installing the overlay twice corrupted the undo chain:
+;
+;   install 1  backs up the 8 STOCK files into backup-0000
+;   install 2  sees all 32 payload files already present, so it backs up all 32 OVERLAY
+;              files into backup-0001 as though they were the originals
+;   uninstall  restores from the newest backup, i.e. copies the overlay over itself
+;              while the true stock files stay buried in backup-0000
+;
+; The uninstaller then deleted the Add/Remove Programs entry unconditionally, so the user
+; was left with dark mode, no entry in Add/Remove, and a removal tool that reported the
+; overlay was not installed. Undoing it by hand meant knowing that the originals were
+; sitting in a backup folder the tool had stopped looking at.
+;
+; Two independent signals, either of which is enough. Stock FileZilla has neither:
+;
+;   1. the Add/Remove Programs key, which survives even if the backup folder is deleted
+;   2. the backup FOLDER itself, not just a marker file in it - a half-deleted backup
+;      directory is itself proof an install ran here, and is exactly the state a
+;      botched removal leaves behind
+;
+; The PowerShell installer in the .7z adds a third, a payload file whose SHA-256 still
+; matches ours, which catches the case where both of these were removed by hand. This
+; NSIS cannot hash without a plugin it does not ship, so it uses the two it can read.
+;
+; Call after the FileZilla version check, so a folder that is not FileZilla is never
+; judged on overlay state, and before anything is written.
+!macro ASSERT_NOT_ALREADY_INSTALLED
+  ReadRegStr $TmpB HKLM "${ARP_KEY}" "InstallLocation"
+  ${If} $TmpB != ""
+    !insertmacro REFUSE "The dark overlay is already registered in Add/Remove Programs as$\n$\n  FileZilla @@FZVERSION@@ light/dark overlay$\n$\npointing at:$\n  $TmpB$\n$\nInstalling a second time would back up the already-overlaid$\nfiles as if they were the originals, which breaks removal: the$\nuninstaller would restore the overlay over itself and delete the$\nonly Add/Remove entry, leaving dark mode you cannot get rid of.$\n$\nNothing has been changed.$\n$\nRemove the overlay first, from Add/Remove Programs, then run$\nthis installer again."
+  ${EndIf}
+
+  ${If} ${FileExists} "$INSTDIR\${BACKUP_DIRNAME}\*.*"
+    !insertmacro REFUSE "A backup folder from a previous overlay install is still$\npresent in:$\n  $INSTDIR\${BACKUP_DIRNAME}$\n$\nFileZilla does not create that folder, so an overlay has been$\ninstalled here before. It may or may not still be active.$\n$\nInstalling over it would back up the already-overlaid files as$\nif they were the originals, which breaks removal.$\n$\nNothing has been changed.$\n$\nRun the removal tool (Add/Remove Programs, or$\n%LOCALAPPDATA%\fzdark\@@UNINST_NAME@@ /D=$INSTDIR) to uninstall it$\ncleanly first. If that reports the overlay is not installed but the$\nfolder is still here, reinstall FileZilla from the official package$\nto get a clean copy."
+  ${EndIf}
+!macroend
+
 ; Consider $Cand. Records the first real @@FZVERSION@@ install in $INSTDIR and, separately,
 ; the first merely plausible FileZilla in $Plausible, so a version mismatch can report what
 ; it found instead of leaving the directory box empty.
@@ -246,6 +286,10 @@ Section "Install"
   ${If} $Found != 1
     !insertmacro REFUSE "This is not a FileZilla ${FZ_VERSION} installation.$\n$\nFolder:$\n$INSTDIR$\n$\nIt must contain filezilla.exe plus the client DLLs$\nlibfzclient-private-${FZ_VERSION_FILE}.dll and$\nlibfzclient-commonui-private-${FZ_VERSION_FILE}.dll.$\n$\nNothing has been changed. Choose the correct FileZilla$\nfolder on the next page, or cancel and run this on a$\nFileZilla ${FZ_VERSION} installation."
   ${EndIf}
+
+  ; Overlay state, checked before the writability probe so a refusal leaves no trace at
+  ; all - not even the probe's temporary file.
+  !insertmacro ASSERT_NOT_ALREADY_INSTALLED
 
   ; Writable target. Only worth checking once the folder is known to be the right one.
   StrCpy $TmpA "$INSTDIR\fzdark-write-probe.tmp"

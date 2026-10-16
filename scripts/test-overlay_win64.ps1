@@ -201,6 +201,91 @@ Step 'B: reinstall after uninstall still works (idempotent recovery)'
 & $Helper -InstallDir $dirB | Out-Null
 Assert-PatchedRuns -Dir $dirB -Label 'B reinstalled:'
 
+# --------------------------------------------------- B: the double-install regression
+#
+# Installing the overlay twice used to be possible, and it destroyed the only way back.
+# The second install saw all 32 payload files already present, so it backed up the
+# OVERLAY files as if they were the originals; the uninstaller then restored the overlay
+# over itself, the genuine stock files stayed buried in an older backup nothing pointed
+# at, and the Add/Remove Programs entry was deleted anyway - leaving dark mode installed
+# with no way to remove it. Each phase below is one link in that chain.
+Step 'B: a second install over an installed overlay is refused'
+$refused = $false
+$why = ''
+try {
+    & $Helper -InstallDir $dirB | Out-Null
+}
+catch {
+    $refused = $true
+    $why = $_.Exception.Message
+}
+if (-not $refused) { throw 'a second install SUCCEEDED - the guard is missing and the undo chain can be corrupted' }
+if ($why -notmatch 'already installed') { throw "the refusal does not say the overlay is already installed:`n    $why" }
+if ($why -notmatch 'breaks removal') { throw "the refusal does not explain why a second install is refused:`n    $why" }
+Ok 'second install refused, and the message explains the consequence'
+Assert-PatchedRuns -Dir $dirB -Label 'B after the refused second install:'
+Ok 'the refused install changed nothing'
+
+Step 'B: two overlapping backups restore the STOCK files, not the overlay'
+# Reproduce the corrupted state a pre-guard second install left behind: a second backup
+# holding the overlay's own files, as though they were the originals.
+$backupRoot = Join-Path $dirB 'fzdark-backup'
+$newest = (Get-ChildItem $backupRoot -Directory | Sort-Object Name | Select-Object -Last 1)
+$poisoned = Join-Path $backupRoot 'backup-9999'
+New-Item -ItemType Directory -Force -Path $poisoned | Out-Null
+Get-ChildItem $newest.FullName -Recurse -File -Filter '*.dll' | ForEach-Object {
+    $rel = $_.FullName.Substring($newest.FullName.Length).TrimStart('\')
+    $dst = Join-Path $poisoned $rel
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+    Copy-Item $_.FullName $dst -Force
+}
+Set-Content -LiteralPath (Join-Path $poisoned 'installed.txt') -Value 'fzdark dark overlay backup'
+Ok "planted a second, poisoned backup alongside $($newest.Name)"
+Start-Sleep -Milliseconds 1100   # make the creation order unambiguous
+
+& $Helper -InstallDir $dirB -Uninstall | Out-Null
+$stateAfterDouble = Get-TreeState -Dir $dirB
+$leftDark = @()
+foreach ($k in $stateAfterDouble.Keys) {
+    if ($stateB.ContainsKey($k) -and $stateAfterDouble[$k] -ne $stateB[$k]) { $leftDark += $k }
+}
+if ($leftDark.Count -gt 0) {
+    throw "uninstall restored the overlay over itself; $($leftDark.Count) file(s) still dark:`n    $($leftDark -join "`n    ")"
+}
+Ok 'restored the genuine stock files from the OLDEST backup, not the overlay'
+if (Test-Path -LiteralPath $backupRoot) {
+    $residue = @(Get-ChildItem $backupRoot -Force)
+    throw "backup directory not cleaned up; left: $($residue.Name -join ', ')"
+}
+Ok 'both backups removed, no residue'
+
+Step 'B: an orphaned overlay is reported honestly, not as "nothing to uninstall"'
+& $Helper -InstallDir $dirB | Out-Null
+Remove-Item -LiteralPath (Join-Path $dirB 'fzdark-backup') -Recurse -Force
+Ok 'removed the backup by hand, leaving the overlay applied'
+
+$msg = ''
+try { & $Helper -InstallDir $dirB -Uninstall | Out-Null }
+catch { $msg = $_.Exception.Message }
+if ($msg -eq '') { throw 'uninstall reported success with no backup present, so there is nothing to restore' }
+if ($msg -match 'nothing to uninstall') {
+    throw "the uninstaller claims nothing is installed while the overlay files are still on disk:`n    $msg"
+}
+if ($msg -notmatch 'still in place') { throw "the uninstaller does not say the overlay files are still there:`n    $msg" }
+Ok 'uninstaller refuses and names what is still installed instead of claiming otherwise'
+
+$leftoverRefused = $false
+try { & $Helper -InstallDir $dirB | Out-Null } catch { $leftoverRefused = $true }
+if (-not $leftoverRefused) { throw 'a fresh install over an orphaned overlay SUCCEEDED - the hash check is missing' }
+Ok 'the guard still refuses an install over an orphaned overlay (no backup, no registry)'
+
+# Deliberately NOT uninstalled here. With the backup gone there is nothing to restore
+# from, so dirB is still dark and no amount of retrying will fix it - which is the whole
+# point of the honest message above. Rebuilt from stock for anything that follows.
+$dirB = New-StockCopy -Name 'B-script'
+$stateB = Get-TreeState -Dir $dirB
+Ok 'orphaned copy rebuilt from stock for the remaining phases'
+
 # ---------------------------------------------------------------- C: released archive
 
 Step 'C: the released .7z archive round-trips'

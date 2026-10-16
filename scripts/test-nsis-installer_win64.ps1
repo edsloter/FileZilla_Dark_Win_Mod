@@ -167,32 +167,72 @@ else { Ok "all $($must.Count) expected overlay files are present" }
 if (Test-Path $toolPath) { Ok "removal tool installed at $toolPath" }
 else { Bad "no removal tool at $toolPath" }
 
+Step 'C2: a second install over an installed overlay is refused'
+# Installing twice used to be allowed, and it made the overlay impossible to remove: the
+# second install backed up the already-overlaid files as if they were the originals, the
+# uninstaller then restored the overlay over itself, and the Add/Remove Programs entry was
+# deleted anyway. The user was left with dark mode and no way to undo it.
+$beforeSecond = Get-TreeState $dir
+$secondCode = Invoke-Wait -Exe $setup -ExeArgs @('/S', "/D=$dir") -TimeoutMs 300000
+if ($secondCode -eq 0) {
+    Bad 'a second install SUCCEEDED - the guard is missing and the undo chain can be corrupted'
+}
+else { Ok "second install refused with exit=$secondCode" }
+
+$afterSecond = Get-TreeState $dir
+$secondTouched = @($afterSecond.Keys | Where-Object {
+    -not $beforeSecond.ContainsKey($_) -or $beforeSecond[$_] -ne $afterSecond[$_]
+})
+if ($secondTouched.Count) { Bad "the refused second install still changed $($secondTouched.Count) file(s)" }
+else { Ok 'the refused install changed nothing on disk' }
+
+$setupLog = Join-Path $env:TEMP 'fzdark-overlay-setup.log'
+if (Test-Path $setupLog) {
+    $logText = Get-Content $setupLog -Raw
+    if ($logText -match 'already registered|backup folder from a previous') {
+        Ok "refusal logged the real reason: $((($logText -split "`n") | Where-Object { $_ -match 'already registered|backup folder' } | Select-Object -First 1).Trim())"
+    }
+    else {
+        Bad "the refusal did not log why. Log said: $($logText.Trim())"
+    }
+}
+else { Bad "no refusal log at $setupLog" }
+
 Step 'D: refuses cleanly while FileZilla from that folder is running'
 # Regression test for a real failure. The first lock probe renamed filezilla.exe, and Windows
 # permits renaming a running image - the image handle allows rename, just not delete - so the
 # probe passed while FileZilla was open and the install then died part way through with NSIS's
 # own "Error opening file for writing cygfilezilla-59.dll". The expected behaviour is a clean
 # refusal before anything is touched.
-$snapshot = Get-TreeState $dir
-$backupsBefore = @(Get-ChildItem (Join-Path $dir 'fzdark-backup') -Directory -ErrorAction SilentlyContinue).Name
+#
+# This runs against its OWN clean copy. The overlay is already installed in $dir by now, so
+# reusing it would make the new already-installed guard refuse first and the lock would never
+# actually be tested - the phase would pass without proving anything.
+$dirLock = Join-Path $Work 'FileZilla FTP Client (lock test)'
+if (Test-Path $dirLock) { Remove-Item $dirLock -Recurse -Force }
+robocopy $StockDir $dirLock /E /NFL /NDL /NJH /NJS /NP | Out-Null
+Ok "clean stock copy for the lock test at $dirLock"
 
-$fz = Start-Process -FilePath (Join-Path $dir 'filezilla.exe') -PassThru
+$snapshot = Get-TreeState $dirLock
+$backupsBefore = @(Get-ChildItem (Join-Path $dirLock 'fzdark-backup') -Directory -ErrorAction SilentlyContinue).Name
+
+$fz = Start-Process -FilePath (Join-Path $dirLock 'filezilla.exe') -PassThru
 Start-Sleep -Seconds 6
 $running = @(Get-Process -Name 'filezilla' -ErrorAction SilentlyContinue |
-    Where-Object { try { $_.Path -and $_.Path.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase) } catch { $false } })
+    Where-Object { try { $_.Path -and $_.Path.StartsWith($dirLock, [StringComparison]::OrdinalIgnoreCase) } catch { $false } })
 if ($running.Count -eq 0) {
     # Not fatal: a headless session may not be able to start a GUI app at all.
     Write-Host '  --  could not start FileZilla from the target folder, so the lock test did not run'
     $fz | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 else {
-    $refuseCode = Invoke-Wait -Exe $setup -ExeArgs @('/S', "/D=$dir") -TimeoutMs 300000
+    $refuseCode = Invoke-Wait -Exe $setup -ExeArgs @('/S', "/D=$dirLock") -TimeoutMs 300000
     foreach ($r in $running) { Stop-Process -Id $r.Id -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 2
 
-    $postRefusal = Get-TreeState $dir
+    $postRefusal = Get-TreeState $dirLock
     $touched = @($postRefusal.Keys | Where-Object { -not $snapshot.ContainsKey($_) -or $snapshot[$_] -ne $postRefusal[$_] })
-    $backupsAfter = @(Get-ChildItem (Join-Path $dir 'fzdark-backup') -Directory -ErrorAction SilentlyContinue).Name
+    $backupsAfter = @(Get-ChildItem (Join-Path $dirLock 'fzdark-backup') -Directory -ErrorAction SilentlyContinue).Name
 
     if ($refuseCode -eq 0) { Bad 'the installer ran to completion while FileZilla was open, so it must have written over locked files' }
     else { Ok "refused with exit=$refuseCode while filezilla.exe was running" }

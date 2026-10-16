@@ -171,12 +171,17 @@ $backupCode = foreach ($rel in $relPaths) {
 $backupCode = ($backupCode -join "`n")
 
 # Per-file undo code: restore what has a backup copy, delete what has none.
+#
+# $OldestBackup, not $NewestBackup: the undo runs in the uninstaller, and a tree that was
+# installed twice has an older backup holding the genuine stock files and a newer one
+# holding the overlay itself. Restoring the newest copies the overlay over itself and
+# leaves the originals stranded, which is the failure this kit shipped with.
 $restoreCode = foreach ($rel in $relPaths) {
     @"
   ; $rel
-  `${If} `${FileExists} "`$NewestBackup\$rel"
+  `${If} `${FileExists} "`$OldestBackup\$rel"
     ClearErrors
-    CopyFiles /SILENT "`$NewestBackup\$rel" "`$TargetDir\$rel"
+    CopyFiles /SILENT "`$OldestBackup\$rel" "`$TargetDir\$rel"
     `${If} `${Errors}
       DetailPrint "Could not restore $rel from the backup."
     `${EndIf}
@@ -199,7 +204,9 @@ $tpl = $tpl.Replace('@@ELEVATION@@', $Elevation)
 $tpl = $tpl.Replace('@@PAYLOAD_BEGIN@@', $fileList)
 $tpl = $tpl.Replace('@@PROBE_BEGIN@@', $probeCode)
 $tpl = $tpl.Replace('@@BACKUP_BEGIN@@', $backupCode)
-$tpl = $tpl.Replace('@@RESTORE_BEGIN@@', $restoreCode)
+# No @@RESTORE_BEGIN@@ here: the installer template has never carried one. It was
+# replaced unconditionally into $tpl, which did nothing, and looked like the undo code
+# was generated into both. Only the uninstaller consumes $restoreCode.
 $tpl = $tpl.Replace('@@PAYLOAD_COUNT@@', [string]$relPaths.Count)
 
 $genNsi = Join-Path $buildDir 'overlay-installer.nsi'

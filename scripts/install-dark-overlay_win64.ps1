@@ -299,6 +299,120 @@ function Assert-DirectoryWritable {
     }
 }
 
+# ------------------------------------------------------------------ state detection
+#
+# The overlay is a single layer, and this is the function that decides whether one is
+# already there. Three independent signals, because each covers a case the others miss:
+#
+#   1. a backup directory  - what our own install leaves behind
+#   2. the Add/Remove key  - what the .exe installer registers
+#   3. a payload file whose hash already matches ours - proof the overlay is applied even
+#      if both of the above were deleted by hand or lost to a partial uninstall
+#
+# Signal 3 is the one that matters most, and it is why this is not just a file check: a
+# single missing marker file would otherwise let a second install run, and a second
+# install backs up the ALREADY-OVERLAID files as though they were the originals. That
+# silently corrupts the undo chain - the uninstaller then restores the overlay over
+# itself, the true originals are orphaned in an older backup nobody points at, and the
+# removal entry in Add/Remove Programs is deleted anyway. The user is left with dark
+# mode they cannot remove.
+$script:ArpKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\FileZillaDarkOverlay'
+
+# Both installers' markers are recognised. They use different names for the same thing -
+# this kit writes backup-manifest.txt, the NSIS installer writes installed.txt - and a
+# tree can hold both if a user tried one, then the other. Treating an unfamiliar marker
+# as "no backup" is how a real backup gets ignored and the originals get lost.
+function Get-OverlayBackups {
+    param([string]$Dir)
+
+    $root = Join-Path $Dir $BackupDirName
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { return @() }
+
+    $found = @()
+    foreach ($d in (Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
+        if (Test-Path -LiteralPath (Join-Path $d.FullName 'backup-manifest.txt') -PathType Leaf) {
+            $found += [pscustomobject]@{ Dir = $d; Kind = 'ps1' }
+        }
+        elseif (Test-Path -LiteralPath (Join-Path $d.FullName 'installed.txt') -PathType Leaf) {
+            $found += [pscustomobject]@{ Dir = $d; Kind = 'nsis' }
+        }
+    }
+
+    # Oldest first, by creation time. Sorting by NAME is wrong the moment the two
+    # conventions meet: 'backup-0000' sorts above '20261016-044853' because 'b' is a
+    # later byte than '2', so name order picked the newer install as the older one.
+    return @($found | Sort-Object { $_.Dir.CreationTimeUtc })
+}
+
+function Test-ArpEntryPresent {
+    try { return (Test-Path -LiteralPath $script:ArpKey) } catch { return $false }
+}
+
+function Test-OverlayApplied {
+    param([string]$Dir, $Entries)
+
+    $backups = @(Get-OverlayBackups -Dir $Dir)
+    if ($backups.Count -gt 0) {
+        return [pscustomobject]@{
+            Installed = $true
+            Why = "a backup from a previous install is present ($($backups[0].Dir.Name))"
+            Fix = 'remove the overlay first, then install again'
+        }
+    }
+
+    if (Test-ArpEntryPresent) {
+        return [pscustomobject]@{
+            Installed = $true
+            Why = 'the overlay is still registered in Add/Remove Programs'
+            Fix = 'uninstall FileZilla ... light/dark overlay from Add/Remove Programs, then install again'
+        }
+    }
+
+    # No backup and no registry entry, but the files themselves may still be ours.
+    if ($Entries) {
+        foreach ($e in $Entries) {
+            $dst = Join-Path $Dir $e.Rel
+            if (-not (Test-Path -LiteralPath $dst -PathType Leaf)) { continue }
+            try {
+                $h = (Get-FileHash -LiteralPath $dst -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            catch { continue }
+            if ($h -eq $e.Hash.ToLowerInvariant()) {
+                return [pscustomobject]@{
+                    Installed = $true
+                    Why = "the overlay's own file is already in place ($($e.Rel)), but its backup and its Add/Remove entry are both missing"
+                    Fix = 'that is a leftover from an interrupted removal. Reinstall FileZilla from the official package to get a clean copy, then install the overlay again'
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]@{ Installed = $false; Why = $null; Fix = $null }
+}
+
+function Assert-OverlayNotInstalled {
+    param([string]$Dir, $Entries)
+
+    $state = Test-OverlayApplied -Dir $Dir -Entries $Entries
+    if (-not $state.Installed) { return }
+
+    $msg = @(
+        "The dark overlay is already installed in:"
+        "  $Dir"
+        ""
+        "Detected because $state.Why."
+        ""
+        "Installing a second time would back up the already-overlaid files as if they"
+        "were the originals, which breaks removal: the uninstaller would restore the"
+        "overlay over itself and delete the only entry in Add/Remove Programs."
+        ""
+        "Nothing has been changed."
+        ""
+        "What to do: $($state.Fix)."
+    ) -join "`n"
+    throw $msg
+}
+
 function Invoke-Install {
     param([string]$Dir, $Entries)
 
@@ -348,42 +462,91 @@ function Invoke-Install {
 }
 
 function Invoke-Uninstall {
-    param([string]$Dir)
+    param([string]$Dir, $Entries)
 
     $backupRoot = Join-Path $Dir $BackupDirName
-    if (-not (Test-Path -LiteralPath $backupRoot)) {
-        throw "no backup directory at $backupRoot, nothing to uninstall."
-    }
+    $backups = @(Get-OverlayBackups -Dir $Dir)
 
-    $newest = Get-ChildItem -LiteralPath $backupRoot -Directory |
-        Sort-Object Name -Descending | Select-Object -First 1
-    if (-not $newest) { throw "no backups found in $backupRoot" }
-
-    $logPath = Join-Path $newest.FullName 'backup-manifest.txt'
-    if (-not (Test-Path -LiteralPath $logPath)) {
-        throw "backup $newest is incomplete (no backup-manifest.txt). Restore it by hand."
-    }
-
-    $nRestore = 0; $nDelete = 0
-    foreach ($line in [System.IO.File]::ReadAllLines($logPath)) {
-        if (-not $line.Trim() -or $line.TrimStart().StartsWith('#')) { continue }
-        $m = [regex]::Match($line, '^(replaced|added)\s+(.+)$')
-        if (-not $m.Success) { throw "malformed backup manifest line: $line" }
-        $action = $m.Groups[1].Value
-        $rel = $m.Groups[2].Value.Trim().Replace('/', '\')
-        $dst = Join-Path $Dir $rel
-
-        if ($action -eq 'replaced') {
-            $save = Join-Path $newest.FullName $rel
-            if (-not (Test-Path -LiteralPath $save -PathType Leaf)) {
-                Write-Warn2 "backup copy missing, leaving $rel alone: $save"
-                continue
-            }
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
-            Copy-Item -LiteralPath $save -Destination $dst -Force
-            $nRestore++
+    # No backup is NOT the same as "no overlay". Saying "nothing to uninstall" here is how
+    # a user ends up with dark mode they cannot get rid of and no tool that admits it
+    # exists. Report what is actually on disk instead.
+    if ($backups.Count -eq 0) {
+        $left = @(Get-LeftoverOverlayFiles -Dir $Dir)
+        $lines = @(
+            "No overlay backup was found under $backupRoot, so no original file can be restored."
+        )
+        if ($left.Count -gt 0) {
+            $lines += ""
+            $lines += "These overlay files are still in place:"
+            foreach ($f in ($left | Select-Object -First 12)) { $lines += "  $($f.Rel)" }
+            if ($left.Count -gt 12) { $lines += "  ... and $($left.Count - 12) more" }
+            $lines += ""
+            $lines += "The originals they replaced were deleted, so this cannot be undone"
+            $lines += "from here. Reinstall FileZilla from the official package, then run"
+            $lines += "this installer again to apply the overlay."
         }
         else {
+            $lines += ""
+            $lines += "No overlay files were found either, so nothing is applied here."
+        }
+        throw ($lines -join "`n")
+    }
+
+    # The OLDEST backup holds the true originals. Only consuming the newest is what breaks
+    # a tree that was installed twice: the newest backup then contains the overlay itself,
+    # restoring it changes nothing, and the real originals stay buried in the older
+    # directory. Restoring from the oldest repairs that case instead of compounding it.
+    $oldest = $backups[0]
+
+    $nRestore = 0; $nDelete = 0
+
+    if ($oldest.Kind -eq 'ps1') {
+        $logPath = Join-Path $oldest.Dir.FullName 'backup-manifest.txt'
+        foreach ($line in [System.IO.File]::ReadAllLines($logPath)) {
+            if (-not $line.Trim() -or $line.TrimStart().StartsWith('#')) { continue }
+            $m = [regex]::Match($line, '^(replaced|added)\s+(.+)$')
+            if (-not $m.Success) { throw "malformed backup manifest line: $line" }
+            $action = $m.Groups[1].Value
+            $rel = $m.Groups[2].Value.Trim().Replace('/', '\')
+            $dst = Join-Path $Dir $rel
+
+            if ($action -eq 'replaced') {
+                $save = Join-Path $oldest.Dir.FullName $rel
+                if (-not (Test-Path -LiteralPath $save -PathType Leaf)) {
+                    Write-Warn2 "backup copy missing, leaving $rel alone: $save"
+                    continue
+                }
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+                Copy-Item -LiteralPath $save -Destination $dst -Force
+                $nRestore++
+            }
+            else {
+                if (Test-Path -LiteralPath $dst -PathType Leaf) {
+                    Remove-Item -LiteralPath $dst -Force
+                    $nDelete++
+                }
+            }
+        }
+    }
+    else {
+        # A backup made by the .exe installer. It records no per-file list; the directory
+        # itself IS the list, so restore everything in it and delete every manifest entry
+        # that is not. Without this branch, removing an .exe overlay with this script threw
+        # "incomplete (no backup-manifest.txt)" and did nothing.
+        $present = @{}
+        foreach ($f in (Get-ChildItem -LiteralPath $oldest.Dir.FullName -Recurse -File)) {
+            $rel = $f.FullName.Substring($oldest.Dir.FullName.Length).TrimStart('\')
+            $present[$rel.ToLowerInvariant()] = $f.FullName
+        }
+        foreach ($k in $present.Keys) {
+            $dst = Join-Path $Dir $k
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+            Copy-Item -LiteralPath $present[$k] -Destination $dst -Force
+            $nRestore++
+        }
+        foreach ($e in $Entries) {
+            if ($present.ContainsKey($e.Rel.ToLowerInvariant())) { continue }
+            $dst = Join-Path $Dir $e.Rel
             if (Test-Path -LiteralPath $dst -PathType Leaf) {
                 Remove-Item -LiteralPath $dst -Force
                 $nDelete++
@@ -391,13 +554,48 @@ function Invoke-Uninstall {
         }
     }
 
-    Remove-Item -LiteralPath $newest.FullName -Recurse -Force
-    if (@(Get-ChildItem -LiteralPath $backupRoot -Force).Count -eq 0) {
-        Remove-Item -LiteralPath $backupRoot -Force
+    # Every backup goes, not just the one consumed: leaving the rest behind is how the
+    # next install picks up a stale chain, and a stray backup directory in a FileZilla
+    # install is not something the user should have to know to delete.
+    foreach ($b in $backups) {
+        Remove-Item -LiteralPath $b.Dir.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path -LiteralPath $backupRoot) {
+        if (@(Get-ChildItem -LiteralPath $backupRoot -Force).Count -eq 0) {
+            Remove-Item -LiteralPath $backupRoot -Force -ErrorAction SilentlyContinue
+        }
+        else {
+            Write-Warn2 "left unrecognised content in ${backupRoot}: $((Get-ChildItem -LiteralPath $backupRoot -Force | ForEach-Object { $_.Name }) -join ', ')"
+        }
     }
 
     Write-Step "restored $nRestore file(s), removed $nDelete overlay-only file(s)"
-    Write-Step "consumed backup $($newest.Name)"
+    if ($backups.Count -gt 1) {
+        Write-Step "consumed $($backups.Count) overlapping backups and restored from the oldest ($($oldest.Dir.Name))"
+    }
+    else {
+        Write-Step "consumed backup $($oldest.Dir.Name)"
+    }
+}
+
+# Payload files still matching our own hashes, used to report an honest state when no
+# backup survives to undo them.
+function Get-LeftoverOverlayFiles {
+    param([string]$Dir)
+
+    $left = @()
+    foreach ($e in $Entries) {
+        $dst = Join-Path $Dir $e.Rel
+        if (-not (Test-Path -LiteralPath $dst -PathType Leaf)) { continue }
+        try {
+            $h = (Get-FileHash -LiteralPath $dst -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        catch { continue }
+        if ($h -eq $e.Hash.ToLowerInvariant()) {
+            $left += [pscustomobject]@{ Rel = $e.Rel }
+        }
+    }
+    return $left
 }
 
 # ---------------------------------------------------------------- main
@@ -414,16 +612,23 @@ Write-Step "target: $dir"
 # access too, so the check covers both paths.
 Assert-DirectoryWritable -Dir $dir
 
+$entries = Read-OverlayManifest
+Assert-OverlayIntact -Entries $entries
+
 if ($Uninstall) {
     Stop-FileZilla -Dir $dir
-    Invoke-Uninstall -Dir $dir
+    Invoke-Uninstall -Dir $dir -Entries $entries
     Write-Host 'Overlay removed; FileZilla restored to its previous state.' -ForegroundColor Green
     return
 }
 
-$entries = Read-OverlayManifest
-Assert-OverlayIntact -Entries $entries
 Assert-TargetVersion -Dir $dir
+
+# After the manifest and version are confirmed - so the refusal cannot fire on a
+# directory that is not even FileZilla - but before FileZilla is closed and a single
+# byte is written.
+Assert-OverlayNotInstalled -Dir $dir -Entries $entries
+
 Stop-FileZilla -Dir $dir
 
 if ($PSCmdlet.ShouldProcess($dir, 'apply FileZilla dark overlay')) {
