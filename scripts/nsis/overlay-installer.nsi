@@ -47,9 +47,14 @@
 ; Removal is a separate, payload-free executable rather than NSIS's built-in uninstaller:
 ; the uninstaller this makensis produces runs silently and does nothing at all, which was
 ; measured rather than assumed. See overlay-uninstaller.nsi. This installer copies that
-; executable into the FileZilla directory and points Add/Remove Programs at it. The two
-; installers are not interchangeable on the same tree: remove an NSIS overlay with the tool
-; it installed.
+; executable into %LOCALAPPDATA%\fzdark and points Add/Remove Programs at it.
+;
+; Install with one installer or the other, not both. Removal is no longer the exclusive
+; business of whichever one installed: both tools now recognise the other's backup layout
+; and both restore from the OLDEST backup, so a tree installed with one and then the other
+; is still removable. They did not used to be - each understood only its own backup, so a
+; mixed tree left the PowerShell uninstaller refusing with "incomplete" while the NSIS one
+; silently ignored backups it could not restore from.
 ; ---------------------------------------------------------------------------
 Unicode true
 

@@ -22,7 +22,7 @@ files** — 32 of them: 8 that replace existing files, 24 that are added, none d
 
 | Artefact | Size | Use it when |
 |---|---|---|
-| `FileZilla-3.71.1-dark-overlay-setup.exe` | ~7.2 MB | Normally. Self-contained installer: detects your FileZilla, backs up what it replaces, installs, and registers an uninstaller. Nothing has to be installed on the machine that installs it. |
+| `FileZilla-3.71.1-dark-overlay-setup.exe` | ~7.2 MB | Normally. Self-contained installer: detects an existing FileZilla 3.71.1, backs up what it replaces, installs, and registers an uninstaller. No extra tools are needed to *run* it — but FileZilla itself must already be installed, and it needs admin to write to Program Files. |
 | `FileZilla-3.71.1-dark-overlay.7z` | ~6.3 MB | You would rather extract files over your existing installation and manage the backup yourself. Also carries the PowerShell installer for a guided, reversible install. |
 
 Each ships with a `.sha256` sidecar in `sha256sum` format so it can be checked after
@@ -119,13 +119,35 @@ Same checks and backup, driven from PowerShell. Undo with the same script plus
   measured, `0` after a refusal that had in fact worked. Use `Start-Process -Wait`, or
   read `%TEMP%\fzdark-overlay-setup.log`, which records what every run did or refused to
   do. Run from an already-elevated prompt and the exit code is reliable.
+- **Installing twice is refused, on purpose.** Both installers stop if the overlay is
+  already there, before touching a single file, and say which check tripped. This is not
+  fussiness: a second install backs up the *already-overlaid* files as though they were the
+  originals, and the uninstaller then restores the overlay over itself, buries the genuine
+  stock files in an older backup, and deletes the Add/Remove entry regardless — leaving
+  dark mode installed with no way to remove it. The refusal is worth heeding; if you have
+  somehow got into that state anyway, the message names the way out.
+  - The PowerShell installer checks three things: a backup directory, the Add/Remove key,
+    and a payload file whose SHA-256 still matches ours. That last one is why it still
+    refuses when the backup folder was deleted by hand and the two markers both look clean.
+  - The `.exe` checks the backup folder and the Add/Remove key. It cannot hash without a
+    plugin this NSIS does not ship.
 - **The removal tool is kept, deliberately.** It lives in `%LOCALAPPDATA%\fzdark`
   because a running executable cannot delete itself, so anything left inside the FileZilla
   folder would stop the installation being restored byte for byte. It is about 54 KB and
   can be deleted at any time.
-- **The two installers are not interchangeable on the same tree.** An `.exe`-installed
-  overlay is removed by the tool that `.exe` placed; a PowerShell-installed one by
-  `install-dark-overlay_win64.ps1 -Uninstall`. Each understands only its own backup.
+- **If removal cannot restore, it says so instead of claiming success.** With no backup
+  left there is no way to tell which files are ours, so nothing is deleted: the tool lists
+  the overlay files still on disk and tells you to reinstall FileZilla from the official
+  package. An earlier version reported "nothing to uninstall" in exactly this state, which
+  was false — the dark mode was still applied and the user had no way back.
+- **Either tool can now remove either install.** An overlay installed by the `.exe` is
+  removed by the tool that `.exe` placed, and one installed by PowerShell is removed by
+  `install-dark-overlay_win64.ps1 -Uninstall`. Each also recognises the other's backup
+  layout, so a tree that was installed with one and then the other is still removable.
+  Earlier releases each understood only their own backup and would refuse or silently
+  restore the wrong files; both now restore from the **oldest** backup, which holds the
+  genuine originals. Neither tool is a substitute for the other at install time - still
+  install with one, or the other.
 - **Which FileZilla gets picked** follows: a target this kit installed to before, then
   Program Files, Program Files (x86), `%LOCALAPPDATA%`, `%LOCALAPPDATA%\Programs`. The
   directory page lets you override it. An empty `/D=` is indistinguishable from passing
