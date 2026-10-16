@@ -132,12 +132,14 @@ function Get-CandidateInstallDirs {
     return $c
 }
 
-# FileZilla uses the autotools layout even on Windows: the install root holds
-# bin\, share\ and locale\, and the executable lives in bin\. Some repackaged
-# builds flatten it, so accept either.
+# Two layouts exist and both are real. The Windows installer and the released
+# overlay are flat: the executable sits directly in the install root, next to its
+# DLLs. Only the build tree under C:\fzdark\install follows the autotools prefix and
+# puts the executable in bin\ beside share\locale\. A .7z of the official ZIP is flat
+# too. So accept either rather than insisting on the one this kit happens to produce.
 function Get-FileZillaExePath {
     param([string]$Dir)
-    foreach ($rel in @('bin\filezilla.exe', 'filezilla.exe')) {
+    foreach ($rel in @('filezilla.exe', 'bin\filezilla.exe')) {
         $p = Join-Path $Dir $rel
         if (Test-Path -LiteralPath $p -PathType Leaf) { return $p }
     }
@@ -151,7 +153,12 @@ function Resolve-InstallDir {
         }
         $explicit = (Resolve-Path -LiteralPath $InstallDir).Path
         if (-not (Get-FileZillaExePath -Dir $explicit)) {
-            throw "no filezilla.exe under $explicit. Point -InstallDir at the FileZilla folder that contains bin\."
+            # Naming the file rather than the bin\ subdirectory: a Windows install is
+            # flat, so telling someone to look for bin\ sends them hunting for a
+            # directory their install has never had.
+            throw "no filezilla.exe in $explicit, nor in a bin\ subdirectory there. " +
+                  "Point -InstallDir at the FileZilla install folder itself - the one " +
+                  "containing filezilla.exe."
         }
         return $explicit
     }
