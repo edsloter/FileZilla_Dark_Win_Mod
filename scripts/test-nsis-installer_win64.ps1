@@ -198,6 +198,44 @@ if (Test-Path $setupLog) {
 }
 else { Bad "no refusal log at $setupLog" }
 
+Step 'C3: /F installs over an existing overlay, and removal still recovers'
+# The /F override on the .exe. Without it the C2 refusal stands; with it the install
+# must go through, announce that it is overwriting, and leave a tree the removal tool
+# can still restore - which it can because removal restores from the OLDEST backup, the
+# one holding the genuine stock files.
+$beforeForced = Get-TreeState $dir
+$forcedCode = Invoke-Wait -Exe $setup -ExeArgs @('/S', '/F', "/D=$dir") -TimeoutMs 300000
+if ($forcedCode -ne 0) { Bad "/F install failed with exit=$forcedCode" }
+else { Ok "/F install succeeded over the already-installed overlay" }
+
+$forcedBackups = @(Get-ChildItem (Join-Path $dir 'fzdark-backup') -Directory -ErrorAction SilentlyContinue).Name
+if ($forcedBackups.Count -lt 2) {
+    Bad "/F install did not add a second backup (found: $($forcedBackups -join ', ')) - the existing one must be kept"
+}
+else { Ok "existing backup kept and a second added: $($forcedBackups -join ', ')" }
+
+# Removal must come back to the original tree despite the overlapping backups.
+$forcedBefore = Get-TreeState $dir
+$forceRemove = Invoke-Wait -Exe $toolPath -ExeArgs @('/S', "/D=$dir") -TimeoutMs 300000
+Ok "removal tool exit=$forceRemove after a forced double install"
+$afterForcedRemove = Get-TreeState $dir
+$stillChanged = @($afterForcedRemove.Keys | Where-Object {
+    -not $beforeForced.ContainsKey($_) -or $beforeForced[$_] -ne $afterForcedRemove[$_]
+})
+if ($stillChanged.Count -eq 0) { Ok 'removal restored the original tree despite two overlapping backups' }
+else {
+    Bad "removal after /F left $($stillChanged.Count) file(s) differing from the pre-install tree"
+    $stillChanged | Select-Object -First 6 | ForEach-Object { Write-Host "        $_" }
+}
+if (Test-Path (Join-Path $dir 'fzdark-backup')) {
+    Bad "the backup folder survived removal: $(@(Get-ChildItem (Join-Path $dir 'fzdark-backup') -Force).Name -join ', ')"
+}
+else { Ok 'every backup removed, including the pre-existing one' }
+
+# Phases E onwards expect the overlay to be applied, so put it back.
+$null = Invoke-Wait -Exe $setup -ExeArgs @('/S', "/D=$dir") -TimeoutMs 300000
+Assert-PatchedRuns -Dir $dir -Label 'C3 reinstalled:'
+
 Step 'D: refuses cleanly while FileZilla from that folder is running'
 # Regression test for a real failure. The first lock probe renamed filezilla.exe, and Windows
 # permits renaming a running image - the image handle allows rename, just not delete - so the
