@@ -4,7 +4,7 @@
     still left to do by hand.
 
 .DESCRIPTION
-    Two things pin the kit to one specific release and cannot be carried across a
+    Four things pin the kit to one specific release and cannot be carried across a
     version bump by editing a number:
 
       manifests\filezilla-<ver>.sources.sha256
@@ -13,20 +13,37 @@
           the new version exists.
 
       $FzPatchedTree in versions.ps1
-          The git tree hash the patch series is known to produce. It changes if
-          upstream moves AND if any patch is edited, so it has to be recomputed after
-          the series is re-applied.
+          The git tree hash the FileZilla patch series is known to produce. It changes
+          if upstream moves AND if any patch is edited, so it has to be recomputed
+          after the series is re-applied.
 
-    This script does both, from the extracted upstream tree, and then tells you what
-    still needs a human: whether each patch applied, what changed, and the new pins to
-    paste into versions.ps1.
+      $WxBaselineTree in versions.ps1
+          The same for wxWidgets, for the PRISTINE tree.
+
+      $WxPatchedTree in versions.ps1
+          The same for wxWidgets, after the series is applied.
+
+    This script does all four, and then tells you what still needs a human: whether
+    each patch applied, what changed, and the new pins to paste into versions.ps1.
 
     It deliberately does not rewrite versions.ps1. versions.ps1 is the audited record
     of what was verified, so it should change only when someone has read the diff and
     agreed the new tree is right. This prints the values instead.
 
+    wxWidgets is handled separately from FileZilla because it moves separately. A
+    FileZilla release does not change wxWidgets, so $WxBaselineTree and $WxPatchedTree
+    carry over untouched, and this script says so rather than leaving you to wonder
+    whether they still apply. Pass -WxVersion to bump wxWidgets at the same time; the
+    series is then re-applied with -Repin so both new hashes are printed.
+
 .PARAMETER Version
     The new FileZilla version, e.g. 3.72.0. Must match $FzVersion in versions.ps1.
+
+.PARAMETER WxVersion
+    The new wxWidgets version, e.g. 3.3.4, when wxWidgets is being bumped too. Omit it
+    when only FileZilla moves, which is the usual case. The new wxWidgets sources must
+    already be extracted to $WxRoot - extract-deps_win64.ps1 - because that is where
+    the series is re-applied and re-pinned.
 
 .PARAMETER SourceTree
     Extracted pristine upstream tree for the new version. Defaults to
@@ -45,12 +62,18 @@
 
 .EXAMPLE
     .\update-version_win64.ps1 -Version 3.72.0
+
+.EXAMPLE
+    .\update-version_win64.ps1 -Version 3.72.0 -WxVersion 3.3.4
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
     [ValidatePattern('^\d+\.\d+\.\d+$')]
     [string]$Version,
+
+    [ValidatePattern('^\d+\.\d+\.\d+$')]
+    [string]$WxVersion,
 
     [string]$SourceTree,
     [string]$WorkTree,
@@ -60,6 +83,12 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# Captured before versions.ps1 is dot-sourced below, which defines $WxVersion itself.
+# PowerShell variable names are case-insensitive, so a parameter of that name is the
+# same variable and the dot-source would overwrite the request with the pinned
+# version. Reading it here is the only way to tell "bump wxWidgets" from "leave it".
+$wxRequested = $WxVersion
 
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'versions.ps1')
 
@@ -202,10 +231,104 @@ if ($failed.Count -gt 0) {
         Write-Host "  The scratch work tree has been kept for inspection: $WorkTree"
         Write-Host '  (-Keep was not needed - a failed run never deletes it.)'
     }
-    return
+    # Non-zero, not a bare return. A caller that cannot see the console still has to
+    # learn the series did not apply, and "it printed some values" is not that.
+    Write-Host ''
+    Write-Host '  RESULT: FAILED - the FileZilla series did not apply cleanly.' -ForegroundColor Red
+    exit 1
 }
 
-# ------------------------------------------------------ 3. report the new pins
+# ------------------------------------------------------ 4. the wxWidgets series
+#
+# Separate from FileZilla because it moves separately. A FileZilla release does not
+# touch wxWidgets, so the common case is "nothing to do, and here is the evidence
+# that the existing pins still hold" rather than silently leaving two of the four
+# pins unmentioned.
+
+Write-Host ''
+Write-Host '  ==========================================================================='
+Write-Host "   wxWidgets $WxVersion"
+Write-Host '  ==========================================================================='
+
+$wxTree = Join-Path $WxRoot 'Makefile.in'
+$wxRefused = $false
+if (-not (Test-Path -LiteralPath $wxTree)) {
+    Warn "wxWidgets sources are not extracted at $WxRoot, so the wxWidgets series was not exercised."
+    Warn '  A FileZilla release does not change wxWidgets, so this is expected when you'
+    Warn '  are only bumping FileZilla. Its two pins carry over unchanged:'
+    Step "  `$WxBaselineTree = '$WxBaselineTree'"
+    Step "  `$WxPatchedTree  = '$WxPatchedTree'"
+}
+elseif (-not $wxRequested -or $wxRequested -eq $WxVersion) {
+    Good 'wxWidgets is unchanged by a FileZilla release; both pins carry over.'
+    Step "  `$WxBaselineTree = '$WxBaselineTree'"
+    Step "  `$WxPatchedTree  = '$WxPatchedTree'"
+    Step '  Those still hold unless patches-wx\ itself changed. Prove it with:'
+    Step '    powershell -File .\scripts\test-wx-patch_win64.ps1'
+}
+else {
+    # Refuse to re-pin the wrong tree. -Repin does not enforce the pins - that is the
+    # point of it during a deliberate bump - so without this check an operator who has
+    # not yet extracted the new tarball would get the OLD version's hashes printed
+    # under the NEW version's heading, and paste them into versions.ps1. The tree on
+    # disk says which version it is; ask it rather than assume.
+    $verHeader = Join-Path $WxRoot 'include\wx\version.h'
+    $actualWx = ''
+    if (Test-Path -LiteralPath $verHeader) {
+        $vtext = [System.IO.File]::ReadAllText($verHeader)
+        $maj = [regex]::Match($vtext, '#define\s+wxMAJOR_VERSION\s+(\d+)')
+        $min = [regex]::Match($vtext, '#define\s+wxMINOR_VERSION\s+(\d+)')
+        $rel = [regex]::Match($vtext, '#define\s+wxRELEASE_NUMBER\s+(\d+)')
+        if ($maj.Success -and $min.Success -and $rel.Success) {
+            $actualWx = "$($maj.Groups[1].Value).$($min.Groups[1].Value).$($rel.Groups[1].Value)"
+        }
+    }
+
+    if ($actualWx -and $actualWx -ne $wxRequested) {
+        $wxRefused = $true
+        Bad "the wxWidgets tree at $WxRoot is version $actualWx, not $wxRequested"
+        Write-Host ''
+        Write-Host '    Re-pinning it would print hashes that belong to the old version, under'
+        Write-Host "    the new version's name. Bump `$WxVersion, `$WxFile, `$WxUrl, `$WxSize and"
+        Write-Host "    `$WxSha512 in versions.ps1 first, then:"
+        Write-Host ''
+        Write-Host '      powershell -File .\scripts\fetch-deps_win64.ps1'
+        Write-Host '      powershell -File .\scripts\extract-deps_win64.ps1'
+        Write-Host "      powershell -File .\scripts\update-version_win64.ps1 -Version $Version -WxVersion $wxRequested"
+        Write-Host ''
+        Write-Host '    extract-deps verifies the tarball against $WxSha512, which is what makes'
+        Write-Host '    the hashes it produces worth pinning.'
+    }
+    else {
+        Step "wxWidgets $WxVersion -> ${wxRequested}: re-applying patches-wx\ to re-pin"
+        $applyWx = Join-Path $PSScriptRoot 'apply-wx-patch_win64.ps1'
+        $wxOut = @()
+        $wxFailed = $false
+        try {
+            # -Repin reports the two new hashes instead of refusing on them, which is
+            # what a deliberate bump looks like. -Tree is $WxRoot, the default, and is
+            # passed explicitly so the intent is visible at the call site.
+            $wxOut = @(Invoke-NativeLogged -File $applyWx -Splat @{ Tree = $WxRoot; Repin = $true } -PassThru)
+        }
+        catch {
+            $wxFailed = $true
+            Bad 'the wxWidgets patch step failed'
+            Write-Host ''
+            Write-Host '    It is idempotent and refuses rather than guessing, so a failure here is'
+            Write-Host '    real. Resolve it in the tree itself:'
+            Write-Host "      powershell -File .\scripts\apply-wx-patch_win64.ps1 -Repin"
+            Write-Host ''
+            Write-Host '    If the new tarball is in place but the tree is still the old one, remove'
+            Write-Host "    $WxRoot and re-extract before retrying."
+        }
+        if (-not $wxFailed) {
+            $wxOut | ForEach-Object { Step "  $_" }
+            Good 'the new wxWidgets pins are printed above'
+        }
+    }
+}
+
+# ------------------------------------------------------ 5. report the new pins
 
 $finalTree = (& $git -C $WorkTree rev-parse 'HEAD^{tree}').Trim()
 
@@ -232,12 +355,34 @@ Write-Host '    $FzSourceFile     the exact filename from the download page'
 Write-Host '    $FzSourceSize     byte size of the tarball'
 Write-Host '    $FzSourceSha512   SHA-512 of the tarball'
 Write-Host ''
+if ($wxRequested -and $wxRequested -ne $WxVersion) {
+    Write-Host '  wxWidgets is being bumped, so its four pins need the same treatment.'
+    Write-Host '  Extract the new tarball to $WxRoot, re-run this script, and paste the'
+    Write-Host '  two hashes the wxWidgets phase prints:'
+    Write-Host ''
+    Write-Host "    `$WxVersion       = '$wxRequested'"
+    Write-Host '    $WxFile / $WxUrl / $WxSize / $WxSha512'
+    Write-Host "    `$WxBaselineTree = '<printed>'"
+    Write-Host "    `$WxPatchedTree  = '<printed>'"
+    Write-Host ''
+}
+else {
+    Write-Host '  wxWidgets is unchanged, so its two pins are already right:'
+    Write-Host ''
+    Write-Host "    `$WxBaselineTree = '$WxBaselineTree'"
+    Write-Host "    `$WxPatchedTree  = '$WxPatchedTree'"
+    Write-Host ''
+}
 Write-Host '  Then:'
   Write-Host "    powershell -File .\scripts\source-manifest_win64.ps1 -Mode Verify ``"
 Write-Host "         -Tree `$SourceTree -Manifest .\manifests\filezilla-$Version.sources.sha256"
+Write-Host "    powershell -File .\scripts\test-powershell-compat_win64.ps1"
+Write-Host "    powershell -File .\scripts\test-wx-patch_win64.ps1"
 Write-Host ''
 Write-Host '  and rebuild from scratch. The tree hash gate at step 6 will refuse to'
-Write-Host '  continue until $FzPatchedTree matches what the series produces.'
+Write-Host '  continue until $FzPatchedTree matches what the series produces, and'
+Write-Host '  build-wx_win64.ps1 refuses to compile a wxWidgets tree that is not'
+Write-Host '  $WxPatchedTree.'
 Write-Host ''
 
 if (-not $Keep) {
@@ -247,3 +392,16 @@ if (-not $Keep) {
 else {
     Step "scratch work tree kept at $WorkTree"
 }
+
+# A wxWidgets bump that was refused leaves a pin unpinned, so this cannot exit 0
+# having silently done less than was asked.
+if ($wxRefused) {
+    Write-Host ''
+    Write-Host '  RESULT: the FileZilla series applied, but the wxWidgets bump did NOT.' -ForegroundColor Red
+    Write-Host '  versions.ps1 is only half updated - do not paste anything yet.' -ForegroundColor Red
+    exit 1
+}
+
+Write-Host ''
+Write-Host '  RESULT: every requested pin is printed above and ready to paste.' -ForegroundColor Green
+exit 0

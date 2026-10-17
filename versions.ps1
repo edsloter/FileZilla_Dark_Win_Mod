@@ -120,6 +120,22 @@ $WxSha512Provenance = 'upstream'
 # build something different. See apply-wx-patch_win64.ps1.
 $WxPatchedTree = '7c3cd5b1409e264d584f5aac3f8fa5c8afacc26e'
 
+# The PRISTINE tree, committed as the baseline before the series is applied.
+#
+# This is what FileZilla gets from manifests\filezilla-<ver>.sources.sha256, which
+# lists all 1320 upstream files individually. wxWidgets has no per-file manifest,
+# because it is not fetched-and-verified the same way: its tarball is checked once
+# against $WxSha512 at fetch time, and after that the tree on disk is the tree that
+# gets built. So this hash is the equivalent check, and it is what makes the first
+# run trustworthy - without it, a tree that had already been patched, or edited by
+# hand, would simply be adopted as the "pristine" baseline and the series applied on
+# top, and the wrong result would look like success.
+#
+# apply-wx-patch_win64.ps1 refuses a baseline that does not match this, which is why
+# deleting $WxRoot\.git is not recoverable in place: delete the tree, re-extract
+# from the pinned tarball and run it again.
+$WxBaselineTree = '27378ceb114a103b65c8c38932a22fcdaa1d29fc'
+
 $WxRoot    = "C:\wxWidgets-$WxVersion"
 
 # ---------------------------------------------------------------------- Boost ---

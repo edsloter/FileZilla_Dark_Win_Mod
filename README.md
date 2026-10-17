@@ -189,6 +189,7 @@ go back to the network, or use `-Force`. Names and sizes are pinned in `versions
 ## Test it
 
     powershell -File .\scripts\test-powershell-compat_win64.ps1
+    powershell -File .\scripts\test-wx-patch_win64.ps1
     powershell -File .\scripts\test-overlay_win64.ps1
     powershell -File .\scripts\test-nsis-installer_win64.ps1
 
@@ -209,12 +210,34 @@ requires:
 A script can parse perfectly and still fail at run time under 5.1, which is what this
 catches.
 
-The second runs four phases against real copies of an actual FileZilla 3.71.1
+The second proves the wxWidgets series still works, which is the question a wxWidgets
+release asks. `$WxPatchedTree` is checked on every build, but nothing checked that the
+series still *applies* — so a release that moved the code patch 0001 touches would have
+failed the tree hash on the build machine, hours in, rather than here in about a minute.
+It cuts a linked git work tree at the `wx-baseline` tag and checks that:
+
+- both pins in `versions.ps1` are well-formed tree hashes and differ from each other
+- `patches-wx\` holds a series and the `.gitignore.baseline` the first run copies in
+- the `wx-baseline` tag hashes to `$WxBaselineTree`, so the tree on disk really is the
+  audited pristine one
+- applying the series to that pristine tree produces exactly `$WxPatchedTree`
+- a second run changes nothing and says so — the double-patch guard
+- the patched tree carries no `.orig` or `.rej` from a half-succeeded 3-way merge
+- a tree that has already been patched and had its `.git` removed is **refused** rather
+  than adopted as its own pristine baseline
+
+It needs an extracted and patched `C:\wxWidgets-3.3.3`, which any machine that has built
+this kit has. Without one the tree checks report as *skipped* with the reason, never as
+passed, so it can sit in the pre-commit suite on a machine that has not built wxWidgets
+yet without reporting a false green. `-Keep` leaves the scratch work tree behind for
+inspection.
+
+The third runs four phases against real copies of an actual FileZilla 3.71.1
 installation: payload extraction, script install, uninstall-and-restore, and a round trip
 of the released `.7z`. It asserts the install is restored byte for byte and that nothing
 outside the payload is disturbed, `fzstorj.exe` included.
 
-The third builds a user-elevation copy of both `.exe` artefacts and round-trips them
+The fourth builds a user-elevation copy of both `.exe` artefacts and round-trips them
 against a scratch copy: install, refuse to overwrite a wrong version, refuse cleanly
 while FileZilla is running, and removal restoring the whole tree byte for byte. Both need
 a stock FileZilla install to copy from; pass `-StockDir` if it is not in
@@ -313,17 +336,30 @@ commit of the pristine sources, then the series — and checks the result agains
 `$WxPatchedTree` in `versions.ps1`, exactly as step 6 does for FileZilla. It is idempotent, it
 rolls back an interrupted `git am`, it refuses a dirty source tree rather than compiling it,
 and `-Reset` returns to the pristine baseline commit and re-applies. `build-wx_win64.ps1` runs
-it before every build, so an unpatched wxWidgets cannot be compiled by accident.
+it before every build, so an unpatched wxWidgets cannot be compiled by accident. The patch
+stays applied; nothing ever reverts the tree, because `filezilla.exe` is linked against the
+import libraries in that same `lib\gcc_dll`.
+
+The tree is checked twice, not once, and the second check is the interesting one.
+`$WxPatchedTree` is compared *before* applying — if it already matches, the series is not
+re-applied, which is the double-patch guard. `$WxBaselineTree` is the hash of the *pristine*
+tree and is compared on every run, which is what makes the first run trustworthy. wxWidgets
+has no per-file manifest like `manifests\filezilla-<ver>.sources.sha256`: its tarball is
+checked once against `$WxSha512` at fetch time, and after that whatever is on disk is what
+gets built. Without the baseline pin, a tree that had already been patched — or edited by
+hand before the first run — would simply be adopted as "pristine" and the series applied on
+top of it, and the wrong answer would look like success. With it, that case is refused and
+told how to recover.
 
 Editing `patches-wx\` changes `$WxPatchedTree`, and the already-built wxWidgets no longer
 matches it. Rebuild with `-Force`.
 
 ## When FileZilla releases a new version
 
-Two pins are specific to one release and cannot be carried across by editing a number: the
-per-file manifest under `manifests\`, and `$FzPatchedTree` in `versions.ps1`. The tree hash
-changes whenever upstream moves *and* whenever any patch is edited, so it has to be
-recomputed rather than guessed.
+Four pins are specific to one release and cannot be carried across by editing a number: the
+per-file manifest under `manifests\`, and `$FzPatchedTree`, `$WxBaselineTree` and
+`$WxPatchedTree` in `versions.ps1`. A tree hash changes whenever upstream moves *and*
+whenever any patch is edited, so it has to be recomputed rather than guessed.
 
 ```powershell
 # against an extracted upstream tree for the new version:
@@ -335,9 +371,32 @@ series to a scratch work tree with `git am -3`, and prints the new values. It do
 edit `versions.ps1`, because that file is the audited record of what was verified; it should
 only change once someone has read the diff.
 
+It handles the wxWidgets series in the same run, because otherwise two of the four pins would
+go unmentioned. wxWidgets moves separately from FileZilla, so the two cases are:
+
+- **A FileZilla release alone** — the usual case. wxWidgets is unaffected, so the script says
+  so and prints `$WxBaselineTree` and `$WxPatchedTree` unchanged, pointing at
+  `test-wx-patch_win64.ps1` as the way to prove they still hold. Nothing to do.
+- **Both at once** — pass `-WxVersion` as well. The new wxWidgets sources have to be
+  extracted to `C:\wxWidgets-3.3.3` first (`fetch-deps_win64.ps1` then
+  `extract-deps_win64.ps1`, which is what verifies the tarball against `$WxSha512`). The
+  script then reads the version out of `include\wx\version.h` in the tree, and **refuses** if
+  that is not the version you asked for — otherwise it would print the old version's hashes
+  under the new version's name, and you would paste them. When the tree does match, the
+  series is re-applied with `-Repin`, which reports the two new hashes instead of enforcing
+  the old pins, because that is what a deliberate bump looks like.
+
+  ```powershell
+  .\scripts\update-version_win64.ps1 -Version 3.72.0 -WxVersion 3.3.4
+  ```
+
 Read the output in this order:
 
-1. **Any patch reported as `FAILED`.** The script stops at the first one, so later patches
+1. **`RESULT:` and the exit code.** The script exits non-zero if the FileZilla series did not
+   apply, or if a requested wxWidgets bump did not happen — so a refused bump cannot pass for
+   a clean run.
+
+2. **Any patch reported as `FAILED`.** The script stops at the first one, so later patches
    are untested. Resolve it in the work tree it leaves behind:
    ```
    git -C C:\fzdark\work\port-3.72.0 am --show-current-patch=diff
@@ -345,15 +404,24 @@ Read the output in this order:
    Most often upstream edited the code the patch touches, or fixed the problem itself and
    the patch should be dropped. Then `git am --continue`, or `--abort` to start over.
 
-2. **`git diff <baseline>..HEAD --stat`.** Patches can apply cleanly and still be wrong —
+3. **`git diff <baseline>..HEAD --stat`.** Patches can apply cleanly and still be wrong —
    a 3-way merge resolves context drift without anyone noticing the logic no longer fits.
 
-3. **Paste the printed values** into `versions.ps1`: `$FzVersion`, `$FzManifestFile` and
+4. **Paste the printed values** into `versions.ps1`: `$FzVersion`, `$FzManifestFile` and
    `$FzPatchedTree`, plus `$FzSourceFile`, `$FzSourceSize` and `$FzSourceSha512`, which come
-   from the download page and cannot be derived.
+   from the download page and cannot be derived. The two wxWidgets pins are printed too,
+   unchanged or new as described above.
 
-4. **Rebuild.** Step 6 compares the patched tree against `$FzPatchedTree` and refuses to
-   continue on a mismatch, so a stale pin fails loudly rather than shipping silently.
+5. **Run both suites**, which between them cover every script's 5.1 compliance and the state
+   of both patch series:
+   ```powershell
+   .\scripts\test-powershell-compat_win64.ps1
+   .\scripts\test-wx-patch_win64.ps1
+   ```
+
+6. **Rebuild.** Step 6 compares the patched FileZilla tree against `$FzPatchedTree` and
+   refuses to continue on a mismatch, and `build-wx_win64.ps1` refuses to compile a wxWidgets
+   tree that is not `$WxPatchedTree`. A stale pin fails loudly rather than shipping silently.
 
 The `-3` flag is what makes most bumps routine: every patch carries git blob hashes, so a hunk
 whose surrounding lines merely *moved* merges instead of failing. The version that breaks this

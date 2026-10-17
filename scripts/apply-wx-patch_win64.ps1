@@ -33,11 +33,35 @@
     baseline commit. Use this after re-extracting the tarball over $WxRoot, or
     after hand-editing wx sources, when the result is a tree the normal checks
     refuse. It cannot lose anything the pinned tarball does not already contain.
+
+.PARAMETER Tree
+    Patch this wxWidgets tree instead of the one in versions.ps1. Only the patch
+    step moves; the pins still come from versions.ps1, so this is for working on a
+    copy - the test suite uses it to prove the series applies to the pristine
+    baseline without touching the tree a build reads from.
+
+    Not named -WxRoot: versions.ps1 already owns that name and PowerShell variable
+    names are case-insensitive, so a parameter of that name would be overwritten by
+    the dot-source and the override would never apply.
+
+.PARAMETER Repin
+    For a new wxWidgets release. Applies the series and PRINTS the baseline and
+    patched tree hashes instead of refusing when they differ from the pinned ones,
+    which is what a deliberate wxWidgets bump looks like. The printed values are the
+    ones to paste into $WxBaselineTree and $WxPatchedTree. Nothing is enforced in
+    this mode, so it proves nothing about a build - it is for regenerating pins, and
+    update-version_win64.ps1 uses it. The hashes it prints are only trustworthy if
+    the tarball they came from was verified against $WxSha512.
 #>
 [CmdletBinding()]
 param(
     [Alias('Force')]
-    [switch]$Reset
+    [switch]$Reset,
+
+    [string]$Tree,
+
+    [Alias('RepinTree')]
+    [switch]$Repin
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,7 +71,13 @@ $ErrorActionPreference = 'Stop'
 # patches-wx\ is a sibling of scripts\, so resolve it from this script's own
 # location. The repo is relocatable and nothing here may assume C:\fzdark.
 $patches = Join-Path (Split-Path -Parent $PSScriptRoot) 'patches-wx'
-$wxRoot = $WxRoot
+
+# Deliberately not called -WxRoot. versions.ps1 already owns $WxRoot and the
+# dot-source below sets it, and PowerShell variable names are case-insensitive, so
+# a parameter of that name would be silently overwritten and the override would
+# never take effect. The default has to be read after the dot-source, not in the
+# param block, which runs before it.
+$wxRoot = if ($Tree) { $Tree } else { $WxRoot }
 
 # Resolve git in two steps, never as (Get-Command ...).Source.
 #
@@ -153,6 +183,45 @@ if (-not (Test-Path -LiteralPath $repo)) {
     Write-Host "  baseline committed and tagged '$baselineTag'"
 }
 
+# The baseline must hash to $WxBaselineTree, checked on every run and not only after
+# it is created. This is what stands in for the per-file manifest FileZilla has:
+# $WxSha512 verified the tarball once, at fetch, and after that whatever is on disk
+# is what gets built, so without this a tree that was already patched - or edited by
+# hand before the first run - would be adopted as "pristine" and the series applied on
+# top of it, and the wrong answer would look like success.
+$baselineCommit = Get-BaselineCommit
+if (-not $baselineCommit) {
+    throw "no pristine baseline commit found in $wxRoot. Delete $wxRoot, re-extract the tarball with extract-deps_win64.ps1 and run this again."
+}
+$baselineTree = Get-TreeHash -Treeish $baselineCommit
+if (-not $baselineTree) { throw "commit $baselineCommit does not resolve to a tree; the repository at $wxRoot is damaged" }
+
+if ($baselineTree -ne $WxBaselineTree) {
+    if ($Repin) {
+        Write-Host "  baseline tree is $baselineTree (was pinned to $WxBaselineTree)"
+    }
+    else {
+        throw @"
+$wxRoot is not a pristine wxWidgets $WxVersion tree.
+  baseline commit : $baselineCommit
+  baseline tree   : $baselineTree
+  pinned          : $WxBaselineTree
+
+The usual cause is that this tree has already been patched and its .git was deleted,
+so the first run adopted the patched sources as the baseline. The series cannot be
+applied on top of itself, and the result would not be the audited tree.
+
+Recover with:
+  Remove-Item '$wxRoot' -Recurse -Force
+  powershell -File .\scripts\extract-deps_win64.ps1
+  powershell -File .\scripts\apply-wx-patch_win64.ps1
+
+For a deliberate wxWidgets release bump, use -Repin and paste the printed hashes into
+versions.ps1 - but only if the tarball was verified against `$WxSha512.
+"@
+    }
+}
+
 # Anything dirty means a file was edited, or the tarball was re-extracted over
 # the top. Either way the tree is no longer the one the series applies to, and
 # building it would ship whatever is there rather than the audited sources.
@@ -175,15 +244,12 @@ $tree = Get-TreeHash -Treeish 'HEAD'
 
 if ($tree -eq $WxPatchedTree) {
     Write-Host "wxWidgets sources are already patched (tree $tree). Nothing to do."
+    if ($Repin) {
+        Write-Host "  `$WxBaselineTree = '$baselineTree'"
+        Write-Host "  `$WxPatchedTree  = '$tree'"
+    }
     return
 }
-
-$baselineCommit = Get-BaselineCommit
-if (-not $baselineCommit) {
-    throw "no pristine baseline commit found in $wxRoot. Delete $wxRoot, re-extract the tarball with extract-deps_win64.ps1 and run this again."
-}
-$baselineTree = Get-TreeHash -Treeish $baselineCommit
-if (-not $baselineTree) { throw "commit $baselineCommit does not resolve to a tree; the repository at $wxRoot is damaged" }
 
 if ($tree -ne $baselineTree) {
     throw "wxWidgets sources are at tree $tree, which is neither the pristine baseline ($baselineTree) nor the audited patched tree ($WxPatchedTree). Refusing to apply the series over an unexpected source state - re-run with -Reset."
@@ -197,7 +263,26 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $tree = Get-TreeHash -Treeish 'HEAD'
-if ($tree -ne $WxPatchedTree) {
-    throw "patched tree is $tree but the audited tree is $WxPatchedTree. Refusing to build from an unexpected source state."
+
+# Report before enforcing, so a -Repin run has its output even when the tree does
+# not match the pin - which is the normal case during a release bump.
+Write-Host "  baseline tree : $baselineTree"
+Write-Host "  patched tree  : $tree"
+
+if ($tree -eq $WxPatchedTree) {
+    Write-Host "wxWidgets sources patched; tree $tree matches the audited tree."
+    return
 }
-Write-Host "wxWidgets sources patched; tree $tree matches the audited tree."
+
+if ($Repin) {
+    Write-Host ''
+    Write-Host '  -Repin was given, so the mismatch above was not enforced. Paste these'
+    Write-Host '  into versions.ps1 only after reading the diff, and only if the tarball'
+    Write-Host '  they came from matched the pinned SHA-512:'
+    Write-Host ''
+    Write-Host "    `$WxBaselineTree = '$baselineTree'"
+    Write-Host "    `$WxPatchedTree  = '$tree'"
+    return
+}
+
+throw "patched tree is $tree but the audited tree is $WxPatchedTree. Refusing to build from an unexpected source state."
