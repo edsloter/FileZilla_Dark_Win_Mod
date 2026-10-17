@@ -14,6 +14,19 @@
     Phase C matters because packaging is a separate step from staging. A build can
     produce a perfect payload and still ship an archive that lost a file, nested
     everything one directory too deep, or was compressed with the wrong tool.
+.PARAMETER Work
+    Scratch directory for the copies. Removed and recreated on every run.
+
+.PARAMETER NoLaunch
+    Do not execute any FileZilla binary.
+
+    Every launch in this suite runs a real client against the real user profile at
+    %APPDATA%\FileZilla, because that is the only way to prove the patched build
+    actually starts. The profile is saved and restored around the run either way,
+    but -NoLaunch removes the side effect altogether rather than undoing it.
+
+    With it, the version-banner and startup checks are reported as skipped rather
+    than passed. Use it when bisecting anything the launches appear to cause.
 #>
 [CmdletBinding()]
 param(
@@ -22,7 +35,8 @@ param(
     # Left empty so it can be derived from versions.ps1 below; param defaults are
     # evaluated before a dot-source has run, so the archive name cannot be built here.
     [string]$Archive,
-    [string]$Work = 'C:\fzdark\out\realtest'
+    [string]$Work = 'C:\fzdark\out\realtest',
+    [switch]$NoLaunch
 )
 
 Set-StrictMode -Version Latest
@@ -45,6 +59,61 @@ foreach ($p in $payload) {
 
 function Step { param([string]$m) Write-Host "`n== $m" -ForegroundColor Cyan }
 function Ok { param([string]$m) Write-Host "   OK  $m" -ForegroundColor Green }
+function Skipped { param([string]$m) Write-Host "   --  skipped (-NoLaunch): $m" -ForegroundColor Yellow }
+
+# ------------------------------------------------------- profile snapshot/restore
+#
+# This suite executes a real FileZilla several times, and FileZilla keeps its state in
+# ONE profile shared by every copy on the machine, at %APPDATA%\FileZilla - plus, on
+# some installs, a desktop shortcut derived from whichever binary was launched. A test
+# run therefore changes the profile of the FileZilla the user actually uses, which for a
+# dark-theme kit is exactly the state that must not be disturbed.
+#
+# SHGetFolderPath reads the AppData location from the registry rather than the
+# environment variable, so overriding $env:APPDATA for the child does not redirect it.
+# Saving and restoring the directory is the reliable way to leave the machine as found.
+$ProfileDir = Join-Path $env:APPDATA 'FileZilla'
+$ProfileBackup = Join-Path $Work '_profile-before'
+
+function Save-FileZillaProfile {
+    if (-not (Test-Path -LiteralPath $ProfileDir)) {
+        Write-Host "   --  no FileZilla profile at $ProfileDir to save"
+        return $false
+    }
+    if (Test-Path -LiteralPath $ProfileBackup) { Remove-Item -LiteralPath $ProfileBackup -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ProfileBackup) | Out-Null
+    Copy-Item -LiteralPath $ProfileDir -Destination $ProfileBackup -Recurse -Force
+    Write-Host "   --  saved your FileZilla profile ($(@(Get-ChildItem $ProfileBackup -Recurse -File).Count) files); it will be restored when this suite ends"
+    return $true
+}
+
+function Restore-FileZillaProfile {
+    param([bool]$Saved)
+    if (-not $Saved) { return }
+    $running = @(Get-Process -Name 'filezilla' -ErrorAction SilentlyContinue)
+    if ($running.Count -gt 0) {
+        Write-Warning "FileZilla is running ($($running.Count) process(es)), so the profile cannot be restored cleanly."
+        Write-Warning "Close FileZilla and copy '$ProfileBackup' back over '$ProfileDir' to be certain."
+        return
+    }
+    try {
+        if (Test-Path -LiteralPath $ProfileDir) { Remove-Item -LiteralPath $ProfileDir -Recurse -Force }
+        Copy-Item -LiteralPath $ProfileBackup -Destination $ProfileDir -Recurse -Force
+        Write-Host "   --  restored your FileZilla profile"
+    }
+    catch {
+        Write-Warning "could not restore the profile automatically: $($_.Exception.Message)"
+        Write-Warning "Copy '$ProfileBackup' back over '$ProfileDir' by hand."
+    }
+}
+
+# Runs on any failure as well as on the success path, so a suite that throws halfway
+# through still leaves the machine as it found it.
+$script:ProfileSaved = Save-FileZillaProfile
+trap {
+    Restore-FileZillaProfile -Saved $script:ProfileSaved
+    break
+}
 
 # Run one of FileZilla's binaries and collect what it says.
 #
@@ -103,6 +172,7 @@ function Get-TreeState {
 # has to be judged on the banner text, not on the exit code.
 function Assert-VersionBanner {
     param([string]$Path, [string]$Label)
+    if ($NoLaunch) { Skipped "$Label version banner"; return }
     $r = Invoke-Exe -Path $Path -Arguments '--version'
     if ($r.Text -notmatch '^FileZilla 3\.71\.1') {
         throw "$Label did not start (exit $($r.ExitCode)): $($r.Text)"
@@ -112,6 +182,7 @@ function Assert-VersionBanner {
 
 function Assert-PatchedRuns {
     param([string]$Dir, [string]$Label)
+    if ($NoLaunch) { Skipped "$Label startup checks"; return }
     Assert-VersionBanner -Path (Join-Path $Dir 'filezilla.exe') -Label "$Label FileZilla"
 
     # fzstorj.exe was not touched by the overlay but does use the shared runtime
@@ -355,3 +426,10 @@ if ($stateD.Count -ne $stateB.Count) {
 Ok 'installer shipped inside the archive installs and uninstalls cleanly'
 
 Write-Host "`nALL OVERLAY TESTS PASSED" -ForegroundColor Green
+
+# Explicit restore on the success path; the trap covers the failure path. Removing the
+# backup afterwards means a finished suite leaves nothing of its own behind.
+Restore-FileZillaProfile -Saved $script:ProfileSaved
+if ($script:ProfileSaved -and (Test-Path -LiteralPath $ProfileBackup)) {
+    Remove-Item -LiteralPath $ProfileBackup -Recurse -Force -ErrorAction SilentlyContinue
+}

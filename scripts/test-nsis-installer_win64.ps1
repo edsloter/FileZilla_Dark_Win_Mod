@@ -28,13 +28,62 @@ param(
     # A stock FileZilla installation to copy. Read only.
     [string]$StockDir = 'C:\Program Files\FileZilla FTP Client',
     # Where the scratch copy and the test build are made.
-    [string]$Work
+    [string]$Work,
+    # Do not execute any FileZilla binary. See the note on the profile snapshot below.
+    [switch]$NoLaunch
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'versions.ps1')
+
+# ------------------------------------------------------- profile snapshot/restore
+#
+# Same reasoning as test-overlay: this suite runs a real FileZilla, and one phase starts
+# the full GUI to hold its files open. FileZilla keeps one shared profile per user, so a
+# test run otherwise changes the configuration of the FileZilla the user actually uses.
+# SHGetFolderPath reads AppData from the registry, not the environment variable, so
+# redirecting $env:APPDATA would not help - the directory is saved and put back instead.
+$ProfileDir = Join-Path $env:APPDATA 'FileZilla'
+$ProfileBackup = Join-Path $env:TEMP 'fzdark-test-profile'
+
+function Save-FileZillaProfile {
+    if (-not (Test-Path -LiteralPath $ProfileDir)) {
+        Write-Host '  --  no FileZilla profile to save'
+        return $false
+    }
+    if (Test-Path -LiteralPath $ProfileBackup) { Remove-Item -LiteralPath $ProfileBackup -Recurse -Force -EA SilentlyContinue }
+    Copy-Item -LiteralPath $ProfileDir -Destination $ProfileBackup -Recurse -Force -EA SilentlyContinue
+    Write-Host "  --  saved your FileZilla profile; it will be restored when this suite ends"
+    return $true
+}
+
+function Restore-FileZillaProfile {
+    param([bool]$Saved)
+    if (-not $Saved) { return }
+    $running = @(Get-Process -Name 'filezilla' -ErrorAction SilentlyContinue)
+    if ($running.Count -gt 0) {
+        Write-Warning "FileZilla is running, so the profile cannot be restored automatically."
+        Write-Warning "Close it and copy '$ProfileBackup' back over '$ProfileDir'."
+        return
+    }
+    try {
+        if (Test-Path -LiteralPath $ProfileDir) { Remove-Item -LiteralPath $ProfileDir -Recurse -Force }
+        Copy-Item -LiteralPath $ProfileBackup -Destination $ProfileDir -Recurse -Force
+        Write-Host '  --  restored your FileZilla profile'
+    }
+    catch {
+        Write-Warning "could not restore the profile automatically: $($_.Exception.Message)"
+        Write-Warning "Copy '$ProfileBackup' back over '$ProfileDir' by hand."
+    }
+}
+
+$script:ProfileSaved = Save-FileZillaProfile
+trap {
+    Restore-FileZillaProfile -Saved $script:ProfileSaved
+    break
+}
 
 if (-not $Work) { $Work = Join-Path $BuildRoot 'out\nsis-test' }
 
@@ -254,13 +303,24 @@ Ok "clean stock copy for the lock test at $dirLock"
 $snapshot = Get-TreeState $dirLock
 $backupsBefore = @(Get-ChildItem (Join-Path $dirLock 'fzdark-backup') -Directory -ErrorAction SilentlyContinue).Name
 
-$fz = Start-Process -FilePath (Join-Path $dirLock 'filezilla.exe') -PassThru
+$fz = $null
+if ($NoLaunch) {
+    Write-Host '  --  skipped (-NoLaunch): the locked-file refusal needs FileZilla actually running'
+}
+else {
+    $fz = Start-Process -FilePath (Join-Path $dirLock 'filezilla.exe') -PassThru
+}
 Start-Sleep -Seconds 6
 $running = @(Get-Process -Name 'filezilla' -ErrorAction SilentlyContinue |
     Where-Object { try { $_.Path -and $_.Path.StartsWith($dirLock, [StringComparison]::OrdinalIgnoreCase) } catch { $false } })
 if ($running.Count -eq 0) {
     # Not fatal: a headless session may not be able to start a GUI app at all.
-    Write-Host '  --  could not start FileZilla from the target folder, so the lock test did not run'
+    if ($NoLaunch) {
+        Write-Host '  --  -NoLaunch was given, so the lock test did not run'
+    }
+    else {
+        Write-Host '  --  could not start FileZilla from the target folder, so the lock test did not run'
+    }
     $fz | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 else {
@@ -285,28 +345,33 @@ else {
 }
 
 Step 'E: the patched client starts, and the untouched canary still starts'
-$v = Invoke-Probe -Exe (Join-Path $dir 'filezilla.exe') -ExeArgs @('--version')
-if ($v.TimedOut) {
-    Bad 'patched FileZilla did not exit within 60s of --version'
-}
-elseif ($v.Text -match "^FileZilla $([regex]::Escape($FzVersion))") {
-    Ok "patched FileZilla starts: $($v.Text)"
+if ($NoLaunch) {
+    Write-Host '  --  skipped (-NoLaunch): neither startup check can run without executing a binary'
 }
 else {
-    Bad "patched FileZilla did not report its version: $($v.Text)"
-}
+    $v = Invoke-Probe -Exe (Join-Path $dir 'filezilla.exe') -ExeArgs @('--version')
+    if ($v.TimedOut) {
+        Bad 'patched FileZilla did not exit within 60s of --version'
+    }
+    elseif ($v.Text -match "^FileZilla $([regex]::Escape($FzVersion))") {
+        Ok "patched FileZilla starts: $($v.Text)"
+    }
+    else {
+        Bad "patched FileZilla did not report its version: $($v.Text)"
+    }
 
-# fzstorj.exe is not replaced by the overlay but shares the runtime DLLs, so if the overlay
-# disturbed anything it shows up here.
-$st = Invoke-Probe -Exe (Join-Path $dir 'fzstorj.exe') -ExeArgs @('--version')
-if ($st.TimedOut) {
-    Bad 'fzstorj.exe did not exit within 60s, so the canary proved nothing. It is expected to announce itself and exit 1 immediately.'
-}
-elseif ($st.Text -match 'fzStorj started') {
-    Ok "fzstorj.exe still starts, so the overlay left the shared runtime alone: $($st.Text)"
-}
-else {
-    Bad "fzstorj.exe broke: $($st.Text)"
+    # fzstorj.exe is not replaced by the overlay but shares the runtime DLLs, so if the overlay
+    # disturbed anything it shows up here.
+    $st = Invoke-Probe -Exe (Join-Path $dir 'fzstorj.exe') -ExeArgs @('--version')
+    if ($st.TimedOut) {
+        Bad 'fzstorj.exe did not exit within 60s, so the canary proved nothing. It is expected to announce itself and exit 1 immediately.'
+    }
+    elseif ($st.Text -match 'fzStorj started') {
+        Ok "fzstorj.exe still starts, so the overlay left the shared runtime alone: $($st.Text)"
+    }
+    else {
+        Bad "fzstorj.exe broke: $($st.Text)"
+    }
 }
 
 # ---------------------------------------------------------------------- remove
@@ -338,6 +403,10 @@ Write-Host '        It lives outside the FileZilla directory precisely so the in
 Write-Host '        restored exactly, and it can be deleted at any time.'
 
 Write-Host ''
+Restore-FileZillaProfile -Saved $script:ProfileSaved
+if ($script:ProfileSaved -and (Test-Path -LiteralPath $ProfileBackup)) {
+    Remove-Item -LiteralPath $ProfileBackup -Recurse -Force -ErrorAction SilentlyContinue
+}
 if ($problems.Count -eq 0) { Write-Host '  ALL NSIS INSTALLER TESTS PASSED' }
 else {
     Write-Host "  $($problems.Count) NSIS INSTALLER PROBLEM(S):" -ForegroundColor Red

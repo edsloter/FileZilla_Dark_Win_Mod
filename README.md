@@ -222,6 +222,16 @@ a stock FileZilla install to copy from; pass `-StockDir` if it is not in
 Neither of the last two needs a built artefact, so they are cheap; but both need a stock
 install, so point them at a scratch copy rather than your live one.
 
+Both of those suites execute a real FileZilla to prove the patched build actually starts,
+and FileZilla keeps one shared profile per user at `%APPDATA%\FileZilla`. So each suite
+**saves that profile and puts it back** when it finishes, including when it fails part way
+through — a test run should not be able to change the configuration of the FileZilla you
+actually use. If FileZilla is running at the end, the restore is skipped and the backup is
+left in place with a message telling you where it is.
+
+If you would rather have no launches at all, pass `-NoLaunch`. The startup checks are then
+reported as *skipped* rather than passed, so it cannot silently look like a green run.
+
 ## Provenance
 
 The upstream source is fetched by hash, never trusted by filename:
