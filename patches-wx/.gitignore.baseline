@@ -1,0 +1,6 @@
+# makefile.gcc build output: objects under build\msw, and libraries, DLLs and
+# generated headers under lib\. Nothing else is listed, so $WxPatchedTree is a
+# hash of the wxWidgets sources rather than one that moves on every compile.
+# Upstream ships nested .gitignore files of its own, which this build respects.
+/build/msw/gcc_*/
+/lib/gcc_*/

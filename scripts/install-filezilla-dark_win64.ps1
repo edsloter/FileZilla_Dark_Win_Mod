@@ -305,6 +305,19 @@ Good 'dependencies staged'
 # ---------------------------------------------------------------- 3. wxWidgets
 
 Banner 'wxWidgets 3.3.3'
+# wxWidgets is patched IN PLACE by apply-wx-patch_win64.ps1, not copied to a work
+# tree first, because build\msw\makefile.gcc and the generated setup.h under
+# lib\gcc_dll\mswu both resolve paths relative to the source root they sit in and
+# build-filezilla_win64.sh links against import libraries from that same tree. So
+# the patch runs before the probe below rather than as part of the build: the
+# sources have to be patched whether or not a build turns out to be needed.
+#
+# It takes no -Root and no -Keep, because wxWidgets does not follow the build root
+# and this step has nothing to clean up. It is idempotent - a git rev-parse when
+# the tree is already at the audited hash - so the cost of asking every run is
+# nothing, and build-wx_win64.ps1 runs it again for the same reason.
+Invoke-Step -Script (Join-Path $Scripts 'apply-wx-patch_win64.ps1') -LogName '04-wx-patch'
+
 # wxWidgets is built in place under its own source root and is NOT installed into
 # deps\. build-filezilla_win64.sh puts that directory on PATH so the linker finds the
 # import libraries, so check the real location rather than deps\bin.

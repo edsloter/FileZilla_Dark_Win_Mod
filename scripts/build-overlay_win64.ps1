@@ -418,7 +418,9 @@ $readme = @(
     $builtStamp
     ''
     'This is an unofficial build. FileZilla is GPLv2 or later; this overlay is'
-    'offered under the same terms, with full source available as a patch series.'
+    'offered under the same terms, with full source available as two patch series:'
+    'one against the FileZilla release tarball, and one against the wxWidgets'
+    'tarball, because the wxWidgets libraries shipped here are patched too.'
 )
 [System.IO.File]::WriteAllLines((Join-Path $overlay 'README.txt'), $readme, (New-Object System.Text.UTF8Encoding $false))
 

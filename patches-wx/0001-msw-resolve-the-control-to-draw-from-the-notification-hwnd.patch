@@ -1,0 +1,108 @@
+From fb0c053da212d313ffb2d071293fd9343fda5a84 Mon Sep 17 00:00:00 2001
+From: fzdark build <build@localhost>
+Date: Sat, 17 Oct 2026 14:02:51 -0500
+Subject: [PATCH] msw: resolve the control to draw from the notification's HWND
+
+wxWindowMSW::MSWOnDrawItem() picked the control to draw with FindItem(id),
+which matches on the control ID and ignores the HWND: wxControl::MSWFindItem()
+in src/msw/control.cpp compares id against GetId() and never looks at the hWnd
+parameter it is handed. WM_DRAWITEM carries the ID in wParam and the
+control's own window in the structure at lParam, so the lookup has everything
+it needs to be unambiguous and throws the HWND away.
+
+It is only safe while no two children share an ID. When they do, the first
+child created answers WM_DRAWITEM on behalf of the other, and:
+
+  - If the winner has no MSWOnDraw() override it inherits
+    wxControl::MSWOnDraw(), which returns false. Returning false tells Windows
+    the message went unhandled, and because an owner-drawn control is never
+    painted by Windows there is no fallback: the control that actually asked to
+    be drawn is left with its space reserved and nothing in it at all.
+
+  - If the winner does override it, the wrong control is drawn into the
+    requesting control's rectangle.
+
+Dark mode makes this reachable. src/msw/checkbox.cpp and src/msw/radiobut.cpp
+both call MSWMakeOwnerDrawn(wxMSWDarkMode::IsActive() || m_hasFgCol), so in dark
+mode every wxCheckBox and wxRadioButton becomes owner-drawn and the whole code
+path is live. In light mode Windows paints them directly and the collision
+never comes into play, which is what makes this look like a dark-mode bug
+rather than a lookup bug.
+
+Sharing an ID is not an application error. wxID_HIGHEST, exported as nullID, is
+a deliberate choice for controls whose ID is never used - no events, no command
+handling - and wx's own code does it, so an application following that idiom
+gets unpainted check boxes.
+
+Prefer the HWND from the notification and keep the ID lookup as a fallback, for
+controls with no window of their own. HandleCtlColor() already resolves
+WM_CTLCOLOR* this way, for the same reason and with the same cast, so this is
+the lookup wx uses for the message that also arrives with an HWND in hand.
+
+Reported against wxWidgets 3.3.3 with FileZilla 3.71.1, where the FileZilla
+side of the collision is src/interface/verifyhostkeydialog.cpp: the
+"Unknown host key" dialog's "Always trust this host" check box shares nullID
+with the wxStaticBitmap icon created above it, and comes out blank in dark
+mode. src/interface/settings/optionspage_interface.cpp is the same story for
+"Swap local and remote panes".
+---
+ src/msw/window.cpp | 39 ++++++++++++++++++++++++++++++---------
+ 1 file changed, 30 insertions(+), 9 deletions(-)
+
+diff --git a/src/msw/window.cpp b/src/msw/window.cpp
+index 57cef26..1d3b423 100644
+--- a/src/msw/window.cpp
++++ b/src/msw/window.cpp
+@@ -4802,19 +4802,40 @@ wxWindowMSW::MSWOnDrawItem(int WXUNUSED_UNLESS_ODRAWN(id),
+ 
+ #if wxUSE_CONTROLS && !defined(__WXUNIVERSAL__)
+ 
++    // Resolve the control to draw from the HWND carried in the notification,
++    // which names exactly the control that asked to be drawn.
++    //
++    // The ID alone is not enough, and relying on it was a real bug: FindItem()
++    // matches on the ID and ignores the HWND, so when two children share an ID the
++    // first one created answers WM_DRAWITEM on behalf of the other. Sharing an ID
++    // is not a mistake applications have to make: wxID_HIGHEST, exposed by wx as
++    // nullID, is a popular choice precisely because the ID is then never used for
++    // anything. Under dark mode wxCheckBox and wxRadioButton are made owner-drawn
++    // (src/msw/checkbox.cpp and src/msw/radiobut.cpp) and Windows never falls back
++    // to painting an owner-drawn control itself, so a control that lost the lookup
++    // was left with its space reserved and nothing at all in it.
++    DRAWITEMSTRUCT *drawStruct = (DRAWITEMSTRUCT *)itemStruct;
++    wxControl *item = NULL;
++    if ( drawStruct->hwndItem )
++        item = wxDynamicCast(FindItemByHWND(drawStruct->hwndItem, true), wxControl);
++
+ #if wxUSE_OWNER_DRAWN
+-    wxControl *item = wxDynamicCast(FindItem(id), wxControl);
++    // Still fall back to the ID for anything the HWND cannot resolve, so controls
++    // that are not backed by a window of their own keep working.
++    if ( !item )
++        item = wxDynamicCast(FindItem(id), wxControl);
+ #else // !wxUSE_OWNER_DRAWN
+     // we may still have owner-drawn buttons internally because we have to make
+     // them owner-drawn to support colour change
+-    wxControl *item =
+-#                     if wxUSE_BUTTON
+-                         wxDynamicCast(FindItem(id), wxButton)
+-#                     else
+-                         nullptr
+-#                     endif
+-                    ;
+-#endif // USE_OWNER_DRAWN
++    if ( !item )
++        item =
++#             if wxUSE_BUTTON
++                wxDynamicCast(FindItem(id), wxButton)
++#             else
++                nullptr
++#             endif
++            ;
++#endif // wxUSE_OWNER_DRAWN
+ 
+     if ( item )
+     {
+-- 
+2.47.1.windows.1
+

@@ -22,6 +22,15 @@
       MSYS2's sh.exe, which cannot execute wx's CMD-style build recipes, and
       the build dies immediately.
 
+    The sources are patched first, by apply-wx-patch_win64.ps1, and this script
+      refuses to compile a tree that patch step will not vouch for. The series in
+      patches-wx\ carries a fix that dark mode depends on: without it wx resolves
+      WM_DRAWITEM by control ID alone, colliding check boxes and radio buttons
+      sharing an ID come out blank, and the whole port is visibly broken. Because
+      wxWidgets is patched in place rather than copied, editing that series means
+      the already-built wxWidgets no longer matches $WxPatchedTree - rebuild with
+      -Force on install-filezilla-dark_win64.ps1 to pick the change up.
+
 .PARAMETER Jobs
     Parallel make jobs. Defaults to the number of logical processors.
 
@@ -66,6 +75,33 @@ if (-not (Test-Path (Join-Path $buildDir 'makefile.gcc'))) {
 }
 foreach ($t in @('g++.exe', 'mingw32-make.exe', 'gcc.exe', 'windres.exe')) {
     if (-not (Test-Path (Join-Path $ucrt "bin\$t"))) { throw "missing UCRT64 tool: $t" }
+}
+
+# The wxWidgets sources are patched, and nothing here may compile wxWidgets from an
+# unpatched tree: the series in patches-wx\ carries a fix dark mode depends on, and
+# a wx built without it yields a FileZilla whose check boxes and radio buttons come
+# out blank. The patch step is idempotent - a git rev-parse once the tree is at the
+# audited hash - so it runs unconditionally rather than being left to the caller.
+#
+# -Splat with an empty hashtable is not an oversight: this is a PowerShell script
+# taking named parameters, and Invoke-NativeLogged is the only helper here that
+# invokes one. There is nothing to pass, because the patch step takes no -Root
+# (wxWidgets does not follow the build root) and no -Keep.
+#
+# No $LASTEXITCODE test afterwards, and that is deliberate. The helper runs a
+# .ps1, which does not set $LASTEXITCODE - it would be whatever the last native
+# command in this process happened to leave, and in a fresh run there is no such
+# command, so the variable is $null and $null -ne 0 is true. A check there fails
+# at random rather than on a real error. A failing patch step ends this one
+# anyway: the child throws, and a throw across `& script` is terminating for the
+# caller too, so the reason reaches the log unaltered.
+$patchScript = Join-Path $PSScriptRoot 'apply-wx-patch_win64.ps1'
+if (-not (Test-Path -LiteralPath $patchScript)) { throw "wxWidgets patch script not found: $patchScript" }
+$patchOut = @(Invoke-NativeLogged -File $patchScript -Splat @{} -PassThru)
+foreach ($line in $patchOut) {
+    # Indent the text under this step's own output, but let the patch step's blank
+    # separator lines stay blank - indenting them just prints stray spaces.
+    if ("$line".Trim().Length) { Write-Host "  $line" } else { Write-Host '' }
 }
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null

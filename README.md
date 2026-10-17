@@ -35,7 +35,8 @@ wx 3.2 fails at load time.
 ## Layout
 
     manifests/    SHA-256 of every file in the upstream source tree
-    patches/      the 9-patch series, plus .gitignore.baseline
+    patches/      the 8-patch series for FileZilla, plus .gitignore.baseline
+    patches-wx/   the patch series for wxWidgets, plus .gitignore.baseline
     licenses/     licence texts for the components built here
     screenshots/  the screenshot at the top of this file
     scripts/      everything that fetches, patches, builds, packages and tests
@@ -168,7 +169,7 @@ needs admin for a specific reason or none at all.
 | MSYS2 packages | `install-toolchain_win64.ps1` | **Yes** | `pacman` refuses to install packages unelevated. |
 | Fetch + verify archives | `fetch-deps_win64.ps1` | No | Writes under the build root. |
 | Extract dependencies | `extract-deps_win64.ps1` | No | Writes under the build root. |
-| Build wxWidgets / libfilezilla / fzssh | `build-wx_win64.ps1`, `build-libfilezilla_win64.sh`, `build-fzssh_win64.ps1` | No | Writes under the build root and `C:\wxWidgets-3.3.3`. |
+| Build wxWidgets / libfilezilla / fzssh | `apply-wx-patch_win64.ps1`, `build-wx_win64.ps1`, `build-libfilezilla_win64.sh`, `build-fzssh_win64.ps1` | No | Writes under the build root and `C:\wxWidgets-3.3.3`. |
 | Patch + build FileZilla | `install-filezilla-dark_win64.ps1` | **Yes** only while the toolchain needs installing | With the toolchain present it needs no admin. |
 | Get a portable NSIS | `get-nsis_win64.ps1` | No | Only for the `.exe` build. Unpacks, never installs. |
 | Build the overlay payloads | `build-overlay_win64.ps1`, `build-nsis-installer_win64.ps1` | No | Reads the install tree, writes the build root. |
@@ -251,13 +252,15 @@ tried across SourceForge and two third-party mirrors, and unpacked with 7-Zip ra
 installed.
 
 The patch series is checked against a known tree hash, `dc392be8...`, so a silently
-mis-applied patch cannot turn into a shipped binary.
+mis-applied patch cannot turn into a shipped binary. The wxWidgets series is checked the
+same way against `$WxPatchedTree`, which is the wxWidgets counterpart of that value.
 
 ## Licensing
 
 This is a modified build. The complete corresponding source is the upstream FileZilla
-3.71.1 tarball plus the patch series in `patches\`, which is exactly what the build
-scripts consume.
+3.71.1 tarball plus the patch series in `patches\`, together with the upstream wxWidgets
+3.3.3 tarball plus the series in `patches-wx\`, which is exactly what the build scripts
+consume.
 
 **The combined work is licensed AGPL-3.0**, because `filezilla.exe` links `libfzssh`,
 which is AGPL-3.0-only. AGPL-3.0 section 13 permits that linking, and it makes the AGPL
@@ -276,6 +279,44 @@ is not the whole answer for this particular build.
 Licence texts covering the components built here are in `licenses\` and ship inside the
 `.7z`. If you redistribute a binary built from this kit, offer the corresponding source as
 described above.
+
+## The wxWidgets patch series
+
+wxWidgets 3.3.3 is not used as shipped. One fix is applied to it, in `patches-wx\`, and it is
+the difference between dark mode mostly working and dark mode visibly broken:
+
+| | |
+|---|---|
+| 0001 | resolve `WM_DRAWITEM` to the right control by HWND instead of by ID |
+
+Under dark mode `wxCheckBox` and `wxRadioButton` become owner-drawn controls, so Windows asks
+the parent window to paint them. `wxWindowMSW::MSWOnDrawItem` found the control to paint with
+`FindItem(id)`, and `wxControl::MSWFindItem` matches on the ID while ignoring the HWND the
+notification also carries. Any two children sharing an ID therefore collide: the first one
+created answers for the other, and since Windows never falls back to painting an owner-drawn
+control itself, the control that asked to be drawn is left with its space reserved and nothing
+in it at all. Sharing an ID is not an application error — `wxID_HIGHEST`, which wx exports as
+`nullID`, is the idiomatic "this ID is never used" — so this hits ordinary code. Patch 0001
+looks the control up by the HWND from the notification and falls back to the ID, which is
+what `HandleCtlColor` already does for `WM_CTLCOLOR*`.
+
+What you see without it: the *Unknown host key* dialog with no *Always trust this host* check
+box, *Already connected* with neither of its options, and most of the check boxes and radio
+buttons on the Settings pages blank while still taking up space.
+
+**wxWidgets is patched in place, at `C:\wxWidgets-3.3.3`, not copied to a work tree first.**
+There is no alternative: `build\msw\makefile.gcc` and the generated `setup.h` under
+`lib\gcc_dll\mswu` resolve everything relative to the source root they sit in, and
+`build-filezilla_win64.sh` links against import libraries from that same tree. So
+`apply-wx-patch_win64.ps1` turns the unpacked tree into a git repository there — one baseline
+commit of the pristine sources, then the series — and checks the result against
+`$WxPatchedTree` in `versions.ps1`, exactly as step 6 does for FileZilla. It is idempotent, it
+rolls back an interrupted `git am`, it refuses a dirty source tree rather than compiling it,
+and `-Reset` returns to the pristine baseline commit and re-applies. `build-wx_win64.ps1` runs
+it before every build, so an unpatched wxWidgets cannot be compiled by accident.
+
+Editing `patches-wx\` changes `$WxPatchedTree`, and the already-built wxWidgets no longer
+matches it. Rebuild with `-Force`.
 
 ## When FileZilla releases a new version
 
@@ -329,4 +370,12 @@ should look.
 | 0005 | fix a `std::wstring` narrowing bug that wx 3.3 exposes |
 | 0007 | follow the system light/dark theme |
 | 0008 | add the 13 light-appearance icon variants |
-| 0009 | give the already-connected dialog's options distinct IDs, so dark mode can draw them |
+
+Nothing in this series works around dark mode painting bugs. That was patch 0009's job
+before the wxWidgets fix below made it unnecessary, and it has been dropped: giving a
+control a distinct ID only papers over the fact that wx was resolving `WM_DRAWITEM` to
+the wrong control in the first place, and it would have had to be repeated for every
+dialog. `$FzPatchedTree` was recomputed accordingly.
+
+The wxWidgets series in `patches-wx\` is documented above; it is separate because it is
+applied to a different component, in a different place, with its own audited tree hash.

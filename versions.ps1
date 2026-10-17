@@ -63,9 +63,9 @@ $FzSourceMirrors = @(
 # source-manifest_win64.ps1; never regenerate it just to make a build pass.
 $FzManifestFile = "filezilla-$($FzVersion).sources.sha256"
 
-# The tree the 9-patch series must produce. The build refuses to continue if the
+# The tree the 8-patch series must produce. The build refuses to continue if the
 # patched tree does not hash to this.
-$FzPatchedTree = 'dc392be8ae789225c6ae7647ad9e3b0ed8fa5cbe'
+$FzPatchedTree = 'f86ca17e735fbf24d8762a94334c1e7218718549'
 
 # ---------------------------------------------------------------- libfilezilla ---
 # Not shipped inside the client tarball: configure.ac requires it already installed.
@@ -108,6 +108,18 @@ $WxUrl     = "https://github.com/wxWidgets/wxWidgets/releases/download/v$WxVersi
 $WxSize    = 32358881
 $WxSha512  = '70915be3478b05f008ba50b376d0f076093bb5000aa2101f1268e1f452f6b2d33e77a31788dff232ea4dc21703c52cb2725402026ec8267aa575a74b5ed8fe45'
 $WxSha512Provenance = 'upstream'
+
+# The tree the wxWidgets patch series must produce. Checked after patching, so a
+# silently mis-applied patch cannot turn into a shipped binary.
+#
+# This is the $WxSha512 counterpart of $FzPatchedTree, and it is per-release AND
+# per-series in the same way: bumping $WxVersion invalidates it by definition, and
+# so does editing anything under patches-wx\. Unlike FileZilla's, wxWidgets is
+# patched IN PLACE at $WxRoot rather than in a copy, because wx's own makefiles
+# and generated setup.h resolve paths relative to that root and a copy would
+# build something different. See apply-wx-patch_win64.ps1.
+$WxPatchedTree = '7c3cd5b1409e264d584f5aac3f8fa5c8afacc26e'
+
 $WxRoot    = "C:\wxWidgets-$WxVersion"
 
 # ---------------------------------------------------------------------- Boost ---
