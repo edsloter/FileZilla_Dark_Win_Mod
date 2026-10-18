@@ -167,6 +167,89 @@ if (-not (Test-Path -LiteralPath $StockDir -PathType Container)) {
 Remove-Item $Work -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Work | Out-Null
 
+# ------------------------------------------------- A0: the uninstaller template
+#
+# Static, and first, because this suite's later phases need a staged payload and a
+# stock install. When either is missing the suite stops at phase A, which is exactly
+# when this bug can sit unnoticed - so the one check that matters most must not depend
+# on any of that.
+#
+# It is here because it killed a real installation. NSIS FindFirst returns "." and ".."
+# alongside the real entries - measured on this makensis, not assumed. The uninstaller
+# enumerated $BackupRoot and ran `RMDir /r "$BackupRoot\$TmpB"` over every result with no
+# test, so it deleted the backup directory and then, on "..", the entire FileZilla
+# directory. The restore itself ran correctly first, which is why the tree looked fine
+# right up until it did not.
+#
+# What is asserted: no recursive delete in the uninstaller may be driven by a bare
+# FindFirst/FindNext enumeration variable. Either it is guarded, or it is not there.
+
+Step 'A0: the uninstaller template cannot delete outside its backup folder'
+$uninstNsi = Join-Path $PSScriptRoot 'nsis\overlay-uninstaller.nsi'
+if (-not (Test-Path -LiteralPath $uninstNsi)) {
+    Bad "uninstaller template missing: $uninstNsi"
+}
+else {
+    $nsi = [System.IO.File]::ReadAllText($uninstNsi)
+    $lines = $nsi -split "`r?`n"
+
+    # Every recursive delete in the file, with the line it is on.
+    $recursive = @()
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*RMDir\s+/r\b') { $recursive += @{ Line = $i + 1; Text = $lines[$i] } }
+    }
+
+    # A delete driven by an enumeration variable ($TmpB here) is the dangerous shape, but
+    # only when nothing above it constrains that variable. $OldestBackup and $NewestBackup
+    # are named rather than enumerated and are validated before use, so they are never
+    # candidates. Plain containment rather than a regex: the text is an NSIS line full of
+    # backslashes, and Regex.Escape inside a format template makes "$TmpB" an invalid
+    # pattern.
+    #
+    # A guard sits on the lines ABOVE the delete, inside a ${If} block, so each candidate
+    # is judged by reading back a few lines rather than the delete line alone.
+    $unguarded = @()
+    foreach ($d in $recursive) {
+        $hit = @('TmpA', 'TmpB' | Where-Object { $d.Text.Contains('$' + $_) })
+        if (-not $hit.Count) { continue }
+
+        $from = [Math]::Max(0, $d.Line - 9)
+        $context = ($lines[$from..($d.Line - 2)] -join "`n")
+        $guarded = ($context -match '\$\{FileExists\}\s+"\$BackupRoot\\\$TmpB\\\$\{') -or
+                   ($context -match '\$\{AndIf\}\s+\$TmpB\s+!=\s+"\.\."')
+        if (-not $guarded) { $unguarded += $d }
+    }
+
+    if ($recursive.Count -eq 0) {
+        Ok 'the uninstaller contains no recursive delete at all'
+    }
+    elseif ($unguarded.Count -eq 0) {
+        Ok "all $($recursive.Count) recursive delete(s) are driven by a validated path, not an enumeration"
+    }
+    else {
+        foreach ($d in $unguarded) {
+            Bad "line $($d.Line) recursively deletes a raw FindFirst result: $($d.Text.Trim())"
+        }
+        Bad 'FindFirst returns "." and "..", so this deletes the parent - the FileZilla directory'
+    }
+
+    # Belt and braces, and the reason the fix is safe: the cleanup loop must only remove a
+    # directory carrying one of this kit's own backup manifests.
+    if ($nsi -match '(?s)\$\{OrIf\}\s+\$\{FileExists\}\s+"\$BackupRoot\\\$TmpB\\\$\{PS1_LOGNAME\}"') {
+        Ok 'the cleanup loop requires a backup manifest of our own before deleting anything'
+    }
+    else {
+        Bad 'the cleanup loop does not require a backup manifest, so any directory under fzdark-backup is removable'
+    }
+
+    if ($nsi -match '\$\{AndIf\}\s+\$TmpB\s+!=\s+"\.\."') {
+        Ok 'the enumeration explicitly skips "." and ".."'
+    }
+    else {
+        Bad 'the enumeration does not skip "." or ".."'
+    }
+}
+
 # ---------------------------------------------------------------------- build
 
 Step 'A: build a user-elevation installer and removal tool'

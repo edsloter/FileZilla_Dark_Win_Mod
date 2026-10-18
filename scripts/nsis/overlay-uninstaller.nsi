@@ -89,15 +89,29 @@ Section "Remove overlay"
   ; writes installed.txt, so a user who tried one and then the other leaves both kinds,
   ; and recognising only one silently ignored a real backup holding the only copy of
   ; their originals.
+  ; Both loops below enumerate $BackupRoot, and FindFirst on this NSIS returns "." and
+  ; ".." alongside the real entries - measured, not assumed. The selection loop tolerates
+  ; them because the marker test simply fails for them, but the cleanup loop used to do
+  ; RMDir /r "$BackupRoot\$TmpB" with no test at all, which meant:
+  ;
+  ;   RMDir /r "...\fzdark-backup\."    deleted the backup directory
+  ;   RMDir /r "...\fzdark-backup\.."   deleted the whole FileZilla directory
+  ;
+  ; so removal restored the files correctly and then deleted everything anyway. Every
+  ; entry is now skipped unless it is a directory carrying one of this kit's own backup
+  ; markers, which no parent directory ever has.
   StrCpy $OldestBackup ""
   FindFirst $TmpA $TmpB "$BackupRoot\*"
   ${DoWhile} $TmpB != ""
-    ${If} ${FileExists} "$BackupRoot\$TmpB\${BACKUP_LOGNAME}"
-    ${OrIf} ${FileExists} "$BackupRoot\$TmpB\${PS1_LOGNAME}"
-      IntOp $BackupCount $BackupCount + 1
-      ${If} $OldestBackup == ""
-      ${OrIf} $TmpB < $OldestBackup
-        StrCpy $OldestBackup "$TmpB"
+    ${If} $TmpB != "."
+    ${AndIf} $TmpB != ".."
+      ${If} ${FileExists} "$BackupRoot\$TmpB\${BACKUP_LOGNAME}"
+      ${OrIf} ${FileExists} "$BackupRoot\$TmpB\${PS1_LOGNAME}"
+        IntOp $BackupCount $BackupCount + 1
+        ${If} $OldestBackup == ""
+        ${OrIf} $TmpB < $OldestBackup
+          StrCpy $OldestBackup "$TmpB"
+        ${EndIf}
       ${EndIf}
     ${EndIf}
     FindNext $TmpA $TmpB
@@ -123,9 +137,20 @@ Section "Remove overlay"
   ; Every backup goes, not just the one restored from. A leftover backup folder in a
   ; FileZilla installation is residue the user should not have to know to delete, and
   ; leaving one behind is what made a later install pick up a stale undo chain.
+  ;
+  ; The marker test is the safety interlock, not decoration. Without it this loop
+  ; recursively deletes "." and ".." as well as the backups, and ".." is the FileZilla
+  ; directory - which is exactly the bug this test now guards against. Only a directory
+  ; holding one of our own manifests is ever a backup, so nothing else is reachable.
   FindFirst $TmpA $TmpB "$BackupRoot\*"
   ${DoWhile} $TmpB != ""
-    RMDir /r "$BackupRoot\$TmpB"
+    ${If} $TmpB != "."
+    ${AndIf} $TmpB != ".."
+    ${If} ${FileExists} "$BackupRoot\$TmpB\${BACKUP_LOGNAME}"
+    ${OrIf} ${FileExists} "$BackupRoot\$TmpB\${PS1_LOGNAME}"
+      RMDir /r "$BackupRoot\$TmpB"
+    ${EndIf}
+    ${EndIf}
     FindNext $TmpA $TmpB
   ${Loop}
   RMDir "$BackupRoot"
